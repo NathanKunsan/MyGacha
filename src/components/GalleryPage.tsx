@@ -363,9 +363,6 @@ export const GalleryPage: React.FC = () => {
                 onDragStart={(e) => e.preventDefault()}
                 className="max-h-full max-w-full w-auto h-auto object-contain rounded-lg select-none pointer-events-none group-hover:scale-105 transition-transform"
               />
-              <div className="absolute bottom-2 left-2 right-2 z-20 px-2 py-0.5 text-[9px] font-bold bg-black/80 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity text-center">
-                {language === 'th' ? 'คลิกเพื่อดูภาพขยาย' : 'Click to zoom'}
-              </div>
             </div>
 
             <div className="flex-1 space-y-3">
