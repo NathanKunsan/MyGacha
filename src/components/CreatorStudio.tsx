@@ -2338,13 +2338,18 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
                           </button>
                         </div>
 
-                        {/* Field Value Input */}
-                        <input
-                          type="text"
+                        {/* Field Value Textarea (Requirement 4: รองรับกด Enter เพื่อเพิ่มบรรทัดใหม่) */}
+                        <textarea
+                          rows={Math.min(6, Math.max(1, (field.value || '').split('\n').length))}
                           value={field.value}
                           onChange={(e) => handleUpdateFieldValue(card.id, field.id, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.stopPropagation();
+                            }
+                          }}
                           placeholder={t.createData.optionalPlaceholder}
-                          className="w-full px-3 py-1.5 text-xs bg-white dark:bg-zinc-700 border-2 border-black dark:border-white rounded-lg focus:outline-none"
+                          className="w-full px-3 py-1.5 text-xs bg-white dark:bg-zinc-700 border-2 border-black dark:border-white rounded-lg focus:outline-none resize-y min-h-[36px] font-['Prompt']"
                         />
                       </div>
                     ))}
