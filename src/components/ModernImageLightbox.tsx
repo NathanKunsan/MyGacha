@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { useGacha } from '../context/GachaContext';
 import { getTranslation } from '../i18n/translations';
@@ -33,6 +34,31 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
   const imgRef = useRef<HTMLImageElement>(null);
   const hasMovedRef = useRef(false);
 
+  // Clamping helper to prevent the image from ever slipping out of the frame (Requirement 2)
+  const getMaxPan = useCallback((currentZoom: number) => {
+    const w = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const h = typeof window !== 'undefined' ? window.innerHeight : 800;
+    // Allow panning proportional to zoom, but keep image safely within viewport
+    const limitX = Math.max(0, (w * Math.max(0, currentZoom - 0.7)) / 2);
+    const limitY = Math.max(0, (h * Math.max(0, currentZoom - 0.7)) / 2);
+    return { limitX, limitY };
+  }, []);
+
+  const clampPan = useCallback((newX: number, newY: number, currentZoom: number) => {
+    if (currentZoom <= 1.05) {
+      // At default zoom, allow small elastic nudge, snaps back on release
+      return {
+        x: Math.max(-60, Math.min(60, newX)),
+        y: Math.max(-60, Math.min(60, newY)),
+      };
+    }
+    const { limitX, limitY } = getMaxPan(currentZoom);
+    return {
+      x: Math.max(-limitX, Math.min(limitX, newX)),
+      y: Math.max(-limitY, Math.min(limitY, newY)),
+    };
+  }, [getMaxPan]);
+
   // Body scroll lock (Item 6)
   useEffect(() => {
     if (isOpen) {
@@ -53,6 +79,16 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
       hasMovedRef.current = false;
     }
   }, [isOpen, imageUrl]);
+
+  // When zoom changes, enforce pan bounds or snap to center if zoom <= 1
+  useEffect(() => {
+    if (!isOpen) return;
+    if (zoom <= 1.05) {
+      setPan({ x: 0, y: 0 });
+    } else {
+      setPan((prev) => clampPan(prev.x, prev.y, zoom));
+    }
+  }, [zoom, isOpen, clampPan]);
 
   // Keyboard navigation (ESC to close, + / - to zoom, 0 to reset)
   useEffect(() => {
@@ -100,7 +136,6 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
 
   // Mouse drag handlers
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Left mouse button only
     if (e.button !== 0) return;
     hasMovedRef.current = false;
     dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -115,14 +150,16 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
     if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
       hasMovedRef.current = true;
     }
-    setPan({
-      x: initialPanRef.current.x + dx,
-      y: initialPanRef.current.y + dy,
-    });
+    const nextPan = clampPan(initialPanRef.current.x + dx, initialPanRef.current.y + dy, zoom);
+    setPan(nextPan);
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
     setIsDragging(false);
+    // Snap back to center if at default zoom
+    if (zoom <= 1.05) {
+      setPan({ x: 0, y: 0 });
+    }
     // If not dragged, close when clicking anywhere outside the image
     if (!hasMovedRef.current) {
       if (imgRef.current) {
@@ -168,10 +205,8 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
       if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
         hasMovedRef.current = true;
       }
-      setPan({
-        x: initialPanRef.current.x + dx,
-        y: initialPanRef.current.y + dy,
-      });
+      const nextPan = clampPan(initialPanRef.current.x + dx, initialPanRef.current.y + dy, zoom);
+      setPan(nextPan);
     } else if (e.touches.length === 2 && pinchStartDistRef.current) {
       hasMovedRef.current = true;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -186,6 +221,9 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
   const handleTouchEnd = (e: React.TouchEvent) => {
     setIsDragging(false);
     pinchStartDistRef.current = null;
+    if (zoom <= 1.05) {
+      setPan({ x: 0, y: 0 });
+    }
     if (!hasMovedRef.current && e.changedTouches && e.changedTouches.length === 1) {
       const touch = e.changedTouches[0];
       if (imgRef.current) {
@@ -206,8 +244,10 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
   };
 
   if (!isOpen || !imageUrl) return null;
+  if (typeof document === 'undefined') return null;
 
-  return (
+  // React Portal to document.body: Guarantees 100% full-viewport coverage above all elements (Requirement 3)
+  return createPortal(
     <div
       ref={containerRef}
       onWheel={handleWheel}
@@ -218,7 +258,20 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onDoubleClick={handleDoubleClick}
-      className={`fixed inset-0 w-screen h-screen z-[999] flex items-center justify-center bg-black/90 backdrop-blur-md select-none overflow-hidden touch-none animate-in fade-in duration-200 ${
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100vw',
+        height: '100vh',
+        zIndex: 9999999,
+        margin: 0,
+        padding: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+      }}
+      className={`fixed inset-0 w-screen h-screen z-[9999999] flex items-center justify-center bg-black/95 backdrop-blur-md select-none overflow-hidden touch-none animate-in fade-in duration-200 ${
         isDragging ? 'cursor-grabbing' : 'cursor-grab'
       }`}
     >
@@ -282,12 +335,12 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
         </div>
       </div>
 
-      {/* Main Image Viewport (NO SCROLLBARS, Smooth GPU pan & scale) */}
+      {/* Main Image Viewport (NO SCROLLBARS, Bound GPU pan & scale) */}
       <div
         style={{
           transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
           transformOrigin: 'center center',
-          transition: isDragging ? 'none' : 'transform 0.12s cubic-bezier(0.2, 0, 0.2, 1)',
+          transition: isDragging ? 'none' : 'transform 0.16s cubic-bezier(0.2, 0, 0.2, 1)',
         }}
         className="relative max-w-[88vw] max-h-[82vh] flex items-center justify-center pointer-events-none will-change-transform"
       >
@@ -316,6 +369,7 @@ export const ModernImageLightbox: React.FC<ModernImageLightboxProps> = ({
             : 'Scroll or pinch to zoom • Drag to pan • Double click to toggle size'}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
