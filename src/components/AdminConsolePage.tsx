@@ -1737,16 +1737,26 @@ export const AdminConsolePage: React.FC = () => {
                                         rows={2}
                                         value={field.value}
                                         onChange={(e) => handleUpdateCardFieldValue(card.id, field.id, e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.stopPropagation();
+                                          }
+                                        }}
                                         placeholder={t.adminConsole.sections.abilityPlaceholder}
-                                        className="w-full px-3 py-1.5 text-xs bg-white dark:bg-zinc-800 border-2 border-black dark:border-white rounded-lg focus:outline-none resize-none font-medium"
+                                        className="w-full px-3 py-1.5 text-xs bg-white dark:bg-zinc-800 border-2 border-black dark:border-white rounded-lg focus:outline-none resize-y min-h-[44px] font-medium"
                                       />
                                     ) : (
-                                      <input
-                                        type="text"
+                                      <textarea
+                                        rows={Math.min(6, Math.max(1, (field.value || '').split('\n').length))}
                                         value={field.value}
                                         onChange={(e) => handleUpdateCardFieldValue(card.id, field.id, e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.stopPropagation();
+                                          }
+                                        }}
                                         placeholder={t.adminConsole.sections.valuePlaceholder}
-                                        className="w-full px-3 py-1.5 text-xs bg-white dark:bg-zinc-800 border-2 border-black dark:border-white rounded-lg focus:outline-none font-medium"
+                                        className="w-full px-3 py-1.5 text-xs bg-white dark:bg-zinc-800 border-2 border-black dark:border-white rounded-lg focus:outline-none resize-y min-h-[34px] font-medium"
                                       />
                                     )}
                                   </div>
