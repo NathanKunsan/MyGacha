@@ -28,6 +28,7 @@ import {
   submitReportToSupabase,
   resolveReportInSupabase,
   deleteReportInSupabase,
+  markReportAsDeleted,
 } from '../lib/supabase';
 import {
   idbSavePack,
@@ -499,7 +500,10 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const deleteReport = async (reportId: string): Promise<boolean> => {
-    // 1. Instant local & state update (0ms delay)
+    // 1. Mark in tombstone blacklist IMMEDIATELY (never resurrected by refreshReports)
+    markReportAsDeleted(reportId);
+
+    // 2. Instant local & state update (0ms delay)
     setReports(prev => {
       const next = prev.filter(r => r.id !== reportId);
       try {
@@ -508,7 +512,7 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return next;
     });
 
-    // 2. Background sync
+    // 3. Background sync
     deleteReportInSupabase(reportId).catch(e => {
       console.warn('Background deleteReportInSupabase failed:', e);
     });
