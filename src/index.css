@@ -1,0 +1,141 @@
+/* Tailwind imports */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply select-none;
+  }
+  img {
+    -webkit-user-drag: none;
+    -khtml-user-drag: none;
+    -moz-user-drag: none;
+    -o-user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* Custom sketch-styled elements & animations */
+.sketch-border {
+  border: 2px solid #18181b;
+  border-radius: 12px;
+}
+
+.dark .sketch-border {
+  border: 2px solid #e4e4e7;
+}
+
+.sketch-box {
+  border: 2px solid #18181b;
+  box-shadow: 3px 3px 0px 0px rgba(0, 0, 0, 0.9);
+}
+
+.dark .sketch-box {
+  border: 2px solid #e4e4e7;
+  box-shadow: 3px 3px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+.sketch-btn {
+  border: 2px solid #18181b;
+  box-shadow: 2px 2px 0px 0px rgba(0, 0, 0, 0.9);
+  transition: transform 0.05s ease-out, box-shadow 0.05s ease-out, background-color 0.08s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sketch-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px 0px rgba(0, 0, 0, 0.9);
+}
+
+.sketch-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px 0px rgba(0, 0, 0, 0.9);
+}
+
+.dark .sketch-btn {
+  border: 2px solid #e4e4e7;
+  box-shadow: 2px 2px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+.dark .sketch-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+.dark .sketch-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+/* Holographic shimmer effect for rare cards */
+@keyframes holoShimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.holo-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.holo-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 0, 150, 0.15) 0%,
+    rgba(0, 204, 255, 0.2) 25%,
+    rgba(255, 255, 0, 0.2) 50%,
+    rgba(0, 255, 128, 0.2) 75%,
+    rgba(255, 0, 150, 0.15) 100%
+  );
+  background-size: 300% 300%;
+  animation: holoShimmer 4s ease infinite;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+/* Neo Color Picker Range Sliders with high-contrast thumb stroke */
+.neo-color-slider {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.neo-color-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid #000000;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 2px 5px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.neo-color-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.neo-color-slider::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+}
+.neo-color-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid #000000;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 2px 5px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.neo-color-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
+.neo-color-slider::-moz-range-thumb:active {
+  transform: scale(1.25);
+}
