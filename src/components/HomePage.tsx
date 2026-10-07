@@ -320,7 +320,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                         key={card.id}
                         className="group flex flex-col items-center cursor-pointer"
                         onClick={() => setInspectedCard(card)}
-                        title={card.fileName ? card.fileName : (card.name || t.home.unnamedCard)}
                       >
                         {/* Box with X icon placeholder style matching user's sketch */}
                         <div className="w-full aspect-[3/4] bg-zinc-100 dark:bg-zinc-700/60 border-2 border-black dark:border-white rounded-2xl overflow-hidden relative shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.85)] group-hover:-translate-y-1.5 transition-transform flex items-center justify-center p-1">
@@ -349,13 +348,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                                 <line x1="0" y1="0" x2="100%" y2="100%" />
                                 <line x1="100%" y1="0" x2="0" y2="100%" />
                               </svg>
-                            </div>
-                          )}
-
-                          {/* Hover Filename Badge (Requirement 3) */}
-                          {(card.fileName || card.name) && (
-                            <div className="absolute bottom-2 left-2 right-2 z-20 px-2 py-0.5 text-[10px] font-bold bg-black/85 text-white rounded-md backdrop-blur-sm pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity truncate text-center shadow border border-white/20">
-                              {card.fileName || `${card.name}.png`}
                             </div>
                           )}
                         </div>
@@ -455,12 +447,11 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                 })()}
 
                 <div
-                  title={inspectedCard.fileName || inspectedCard.name || t.home.unnamedCard}
                   onClick={() => {
                     if (inspectedCard.imageUrl) {
                       setLightboxImage({
                         url: inspectedCard.imageUrl,
-                        title: getCardDisplayName(inspectedCard.name) || inspectedCard.name || inspectedCard.fileName || '',
+                        title: getCardDisplayName(inspectedCard.name) || inspectedCard.name || '',
                       });
                     }
                   }}
@@ -482,13 +473,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                         <line x1="0" y1="0" x2="100%" y2="100%" />
                         <line x1="100%" y1="0" x2="0" y2="100%" />
                       </svg>
-                    </div>
-                  )}
-
-                  {/* Hover Filename Badge (Requirement 3) */}
-                  {(inspectedCard.fileName || inspectedCard.name) && (
-                    <div className="absolute bottom-2 left-2 right-2 z-20 px-2 py-0.5 text-[10px] font-bold bg-black/85 text-white rounded-md backdrop-blur-sm pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity truncate text-center shadow border border-white/20">
-                      {inspectedCard.fileName || `${inspectedCard.name}.png`}
                     </div>
                   )}
                 </div>
@@ -693,7 +677,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                         key={card.id}
                         className="group flex flex-col items-center cursor-pointer"
                         onClick={() => setInspectedCard(card)}
-                        title={card.fileName || card.name || t.home.unnamedCard}
                       >
                         <div className="w-full aspect-[3/4] bg-zinc-100 dark:bg-zinc-700/60 border-2 border-black dark:border-white rounded-xl overflow-hidden relative shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.8)] group-hover:-translate-y-1 transition-transform flex items-center justify-center p-1">
                           <span
@@ -719,13 +702,6 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                                 <line x1="0" y1="0" x2="100%" y2="100%" />
                                 <line x1="100%" y1="0" x2="0" y2="100%" />
                               </svg>
-                            </div>
-                          )}
-
-                          {/* Hover Filename Badge (Requirement 3) */}
-                          {(card.fileName || card.name) && (
-                            <div className="absolute bottom-1.5 left-1.5 right-1.5 z-20 px-1.5 py-0.5 text-[9px] font-bold bg-black/85 text-white rounded backdrop-blur-sm pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity truncate text-center shadow border border-white/20">
-                              {card.fileName || `${card.name}.png`}
                             </div>
                           )}
                         </div>
