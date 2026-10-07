@@ -560,7 +560,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenPack }) => {
                             <span className="font-bold text-zinc-600 dark:text-zinc-400">
                               {field.name}:{' '}
                             </span>
-                            <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                            <span className="font-semibold text-zinc-900 dark:text-zinc-100 whitespace-pre-wrap">
                               {field.value}
                             </span>
                           </div>
