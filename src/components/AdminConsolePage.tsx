@@ -416,18 +416,8 @@ export const AdminConsolePage: React.FC = () => {
   };
 
   // Point 3: Explicit Save Pack Changes - ONLY saves when clicking this button!
-  const handleSavePackChanges = async (forceOverwriteDuplicates = false) => {
+  const handleSavePackChanges = async () => {
     if (!packDraft) return;
-
-    // Check duplicate card names
-    const duplicateGroups = findDuplicateCardNameGroups(packDraft.cards || []);
-    if (duplicateGroups.size > 0 && !forceOverwriteDuplicates) {
-      setDuplicateCardNameModal({
-        isOpen: true,
-        duplicateGroups,
-      });
-      return;
-    }
 
     const preparedCards = prepareCardsForDatabase(packDraft.cards || []);
     const updatedDraft: PackSeries = {
@@ -2708,7 +2698,7 @@ export const AdminConsolePage: React.FC = () => {
                 type="button"
                 onClick={async () => {
                   setDuplicateCardNameModal(null);
-                  await handleSavePackChanges(true);
+                  await handleSavePackChanges();
                 }}
                 className="px-5 py-2 text-xs font-black border-2 border-black dark:border-white rounded-xl bg-yellow-400 hover:bg-yellow-300 text-black sketch-btn shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
               >
