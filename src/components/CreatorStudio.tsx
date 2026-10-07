@@ -483,14 +483,17 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
 
     if (newItems.length > 0) {
       setCards(prev => [...prev, ...newItems]);
+      // Preset drop count to total cards attached in this rarity
+      setRarities(prev => prev.map(item => {
+        if (item.name?.trim().toLowerCase() === rarityName.trim().toLowerCase()) {
+          const currentAttached = cards.filter(c => c.rarity?.trim().toLowerCase() === rarityName.trim().toLowerCase()).length;
+          const totalAttached = currentAttached + newItems.length;
+          return { ...item, cardCount: totalAttached };
+        }
+        return item;
+      }));
 
-      if (hasDuplicate) {
-        addToast(language === 'th' ? 'แนบภาพสำเร็จ (ลบและข้ามไฟล์ซ้ำออกแล้ว)' : 'Attached (duplicates skipped)', 'info');
-      } else {
-        addToast(language === 'th' ? 'แนบภาพสำเร็จ' : 'Cards attached', 'success');
-      }
-    } else if (hasDuplicate) {
-      addToast(language === 'th' ? 'ไฟล์ทั้งหมดที่เลือกมีอยู่ในการ์ดแล้ว' : 'All selected files already exist', 'warning');
+      addToast(language === 'th' ? 'แนบภาพสำเร็จ' : 'Cards attached', 'success');
     }
   };
 
@@ -672,7 +675,11 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
       tearConfig,
       cardsPerPack,
       price,
-      rarities,
+      rarities: rarities.map(r => {
+        const attached = cards.filter(c => c.rarity?.trim().toLowerCase() === r.name?.trim().toLowerCase()).length;
+        const count = (r.cardCount !== undefined && r.cardCount !== null) ? r.cardCount : attached;
+        return { ...r, cardCount: Math.max(0, Math.min(attached, count)) };
+      }),
       cards: sortCardsByRarityOrder(cards, rarities),
       createdAt: editingPack?.createdAt || new Date().toISOString(),
       isPublished: editingPack?.isPublished || false,
@@ -729,16 +736,25 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
       const rName = (c.rarity || 'Common').trim().toUpperCase();
       if (!existingRarityNames.has(rName.toLowerCase())) {
         existingRarityNames.add(rName.toLowerCase());
+        const countForThisR = cleanCards.filter(card => (card.rarity || 'Common').trim().toUpperCase() === rName).length;
         missingRarities.push({
           id: `r-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           name: rName,
           color: '#facc15',
-          cardCount: 10, // Fixed default drop rate, never stack rate by card count
+          cardCount: countForThisR, // Preset to total cards in this rarity
         });
       }
     });
 
-    const finalRarities = [...(target.rarities || []), ...missingRarities];
+    const finalRarities = [...(target.rarities || []), ...missingRarities].map(r => {
+      const countForR = cleanCards.filter(c => c.rarity?.trim().toLowerCase() === r.name?.trim().toLowerCase()).length;
+      return {
+        ...r,
+        cardCount: (r.cardCount !== undefined && r.cardCount !== null && r.cardCount > 0)
+          ? Math.min(r.cardCount, countForR)
+          : countForR,
+      };
+    });
 
     setEditingPack({ ...target, cards: cleanCards, rarities: finalRarities });
     currentPackIdRef.current = target.id;
@@ -852,21 +868,6 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
     const cleanCards = deduplicateCards(cards);
     if (cleanCards.length !== cards.length) {
       setCards(cleanCards);
-    }
-
-    // Duplicate card names validation & overwrite flow:
-    // (Item 3: ในหน้า CreateCardsData ตรงส่วนของชื่อการ์ด จะเป็นสิ่งเดียวที่ไม่ต้องตรวจเช็คการซ้ำ เพราะชื่อการ์ดเป็นเพียงตัวแสดงผลเท่านั้น)
-    const duplicateGroups = currentStep === 3 ? new Map() : findDuplicateCardNameGroups(cleanCards);
-    if (duplicateGroups.size > 0 && !forceOverwriteDuplicateNames) {
-      const pack = buildCurrentPack();
-      pack.cards = cleanCards;
-      setDuplicateCardNameModal({
-        isOpen: true,
-        duplicateGroups,
-        packToSave: pack,
-        isPublish: false,
-      });
-      return;
     }
 
     const preparedCards = prepareCardsForDatabase(cleanCards);
@@ -999,21 +1000,6 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
     if (totalOdds <= 0) {
       addToast(language === 'th' ? 'ไม่สามารถเผยแพร่งานเปล่าได้: กรุณากำหนดจำนวนใบต่อระดับความแรร์ (โอกาสออก)' : 'Cannot publish empty pack: Please specify card count per rarity', 'warning');
       goToStep(2);
-      return;
-    }
-
-    // Duplicate card names validation & overwrite flow for publish:
-    // (Item 3: ในหน้า CreateCardsData ตรงส่วนของชื่อการ์ด จะเป็นสิ่งเดียวที่ไม่ต้องตรวจเช็คการซ้ำ เพราะชื่อการ์ดเป็นเพียงตัวแสดงผลเท่านั้น)
-    const duplicateGroups = currentStep === 3 ? new Map() : findDuplicateCardNameGroups(cleanCards);
-    if (duplicateGroups.size > 0 && !forceOverwriteDuplicateNames) {
-      const pack = buildCurrentPack();
-      pack.cards = cleanCards;
-      setDuplicateCardNameModal({
-        isOpen: true,
-        duplicateGroups,
-        packToSave: pack,
-        isPublish: true,
-      });
       return;
     }
 
@@ -1850,7 +1836,6 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
               <div className="space-y-3">
                 {rarities.map((r, idx) => {
                   const attachedCount = cards.filter(c => c.rarity?.trim().toLowerCase() === r.name?.trim().toLowerCase()).length;
-                  const chancePerCard = attachedCount > 0 ? (100 / attachedCount).toFixed(1) : '0';
 
                   return (
                     <div
@@ -1970,26 +1955,18 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
                         />
                       </div>
 
-                      {/* Right: Attached count, Card Chance % & Drop rate count */}
+                      {/* Right: Attached count & Drop rate count */}
                       <div className="flex items-center gap-2 shrink-0 justify-between sm:justify-end">
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-zinc-500 dark:text-zinc-400 font-semibold hidden sm:inline">
                             {language === 'th' ? `แนบแล้ว ${attachedCount} ใบ` : `${attachedCount} attached`}
                           </span>
-                          {attachedCount > 0 && (
-                            <span
-                              className="text-[10px] font-bold px-1.5 py-0.5 bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 rounded border border-sky-300 dark:border-sky-700"
-                              title={language === 'th' ? `โอกาสออกการ์ดแต่ล่ะใบในเรทนี้คือ 100/${attachedCount} = ${chancePerCard}%` : `Drop chance per card: ${chancePerCard}%`}
-                            >
-                              ~{chancePerCard}%/{language === 'th' ? 'ใบ' : 'card'}
-                            </span>
-                          )}
                         </div>
                         <input
                           type="number"
                           min={0}
                           max={attachedCount}
-                          value={Math.max(0, Math.min(attachedCount, r.cardCount ?? 0))}
+                          value={Math.max(0, Math.min(attachedCount, (r.cardCount !== undefined && r.cardCount !== null) ? r.cardCount : attachedCount))}
                           onChange={(e) => {
                             const parsed = parseInt(e.target.value, 10);
                             const val = isNaN(parsed) ? 0 : Math.max(0, Math.min(attachedCount, parsed));
@@ -2041,7 +2018,7 @@ export const CreatorStudio: React.FC<CreatorStudioProps> = () => {
                       <h2 className="text-base font-black flex items-center gap-2">
                         <span>{t.createCards.raritySectionTitle.replace('{name}', r.name)}</span>
                         <span className="text-xs font-normal text-zinc-500">
-                          {t.createCards.rarityConfiguredHint.replace('{count}', String(r.cardCount))}
+                          {t.createCards.rarityConfiguredHint.replace('{count}', String((r.cardCount !== undefined && r.cardCount !== null) ? r.cardCount : rarityCards.length))}
                         </span>
                       </h2>
                       <span className="text-xs font-bold text-zinc-600 dark:text-zinc-400">
