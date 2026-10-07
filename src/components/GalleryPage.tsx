@@ -394,7 +394,7 @@ export const GalleryPage: React.FC = () => {
                       .map((field) => (
                       <div key={field.id} className="p-1.5 bg-zinc-100 dark:bg-zinc-900 rounded text-[11px]">
                         <span className="font-bold">{field.name}: </span>
-                        <span>{field.value}</span>
+                        <span className="whitespace-pre-wrap">{field.value}</span>
                       </div>
                     ))}
                   </div>
