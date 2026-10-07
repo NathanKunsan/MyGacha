@@ -685,13 +685,35 @@ export const syncCardsToUserInventory = async (
 };
 
 /**
- * จัดการข้อมูลรายงานความไม่เหมาะสม (Reports Management)
+ * จัดการข้อมูลรายงานความไม่เหมาะสม (Reports Management) พร้อมระบบ Tombstone ถาวร
  */
+const DELETED_REPORTS_TOMBSTONE_KEY = 'mygacha_deleted_reports_tombstone';
+
+export const getDeletedReportIds = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem(DELETED_REPORTS_TOMBSTONE_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+};
+
+export const markReportAsDeleted = (reportId: string): void => {
+  try {
+    const current = getDeletedReportIds();
+    current.add(reportId);
+    localStorage.setItem(DELETED_REPORTS_TOMBSTONE_KEY, JSON.stringify(Array.from(current)));
+  } catch {}
+};
+
 export const fetchReportsFromSupabase = async (): Promise<ContentReport[]> => {
+  const tombstone = getDeletedReportIds();
+
   if (!supabase) {
     try {
       const local = localStorage.getItem('mygacha_reports');
-      return local ? JSON.parse(local) : [];
+      const parsed: ContentReport[] = local ? JSON.parse(local) : [];
+      return parsed.filter(r => !tombstone.has(r.id));
     } catch {
       return [];
     }
@@ -703,8 +725,9 @@ export const fetchReportsFromSupabase = async (): Promise<ContentReport[]> => {
       const text = await fileData.text();
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed)) {
-        localStorage.setItem('mygacha_reports', JSON.stringify(parsed));
-        return parsed;
+        const clean = parsed.filter(r => !tombstone.has(r.id));
+        localStorage.setItem('mygacha_reports', JSON.stringify(clean));
+        return clean;
       }
     }
   } catch (err) {
@@ -713,17 +736,20 @@ export const fetchReportsFromSupabase = async (): Promise<ContentReport[]> => {
 
   try {
     const local = localStorage.getItem('mygacha_reports');
-    return local ? JSON.parse(local) : [];
+    const parsed: ContentReport[] = local ? JSON.parse(local) : [];
+    return parsed.filter(r => !tombstone.has(r.id));
   } catch {
     return [];
   }
 };
 
 export const saveReportsToSupabase = async (reports: ContentReport[]): Promise<void> => {
-  localStorage.setItem('mygacha_reports', JSON.stringify(reports));
+  const tombstone = getDeletedReportIds();
+  const clean = reports.filter(r => !tombstone.has(r.id));
+  localStorage.setItem('mygacha_reports', JSON.stringify(clean));
   if (!supabase) return;
   try {
-    const blob = new Blob([JSON.stringify(reports, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json' });
     await supabase.storage.from('mygacha').upload('system/reports.json', blob, {
       upsert: true,
       contentType: 'application/json',
@@ -769,10 +795,15 @@ export const resolveReportInSupabase = async (reportId: string, resolvedBy?: str
 };
 
 export const deleteReportInSupabase = async (reportId: string): Promise<boolean> => {
-  const current = await fetchReportsFromSupabase();
-  const updated = current.filter(r => r.id !== reportId);
-  await saveReportsToSupabase(updated);
-  await broadcastRealtimeEvent('report_deleted', { reportId });
+  markReportAsDeleted(reportId);
+  try {
+    const current = await fetchReportsFromSupabase();
+    const updated = current.filter(r => r.id !== reportId);
+    await saveReportsToSupabase(updated);
+    await broadcastRealtimeEvent('report_deleted', { reportId });
+  } catch (err) {
+    console.warn('deleteReportInSupabase error:', err);
+  }
   return true;
 };
 
