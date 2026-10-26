@@ -1342,7 +1342,21 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           .on('broadcast', { event: 'market_card_bought' }, (payload: any) => {
             try {
               const data = payload?.payload || payload;
-              const { sellerId, price, buyerUsername, cardName } = data || {};
+              const { sellerId, price, buyerUsername, cardName, listingId } = data || {};
+              if (localBroadcastChannel) {
+                localBroadcastChannel.postMessage({ event: 'market_card_bought', payload: data });
+              }
+              if (listingId) {
+                try {
+                  const stored = localStorage.getItem('mygacha_market_listings');
+                  if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed)) {
+                      localStorage.setItem('mygacha_market_listings', JSON.stringify(parsed.filter((l: any) => l.id !== listingId)));
+                    }
+                  }
+                } catch {}
+              }
               if (sellerId && currentUser && currentUser.id === sellerId) {
                 addToast(
                   language === 'th'
@@ -1359,6 +1373,22 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   } catch {}
                   return updated;
                 });
+              }
+            } catch {}
+          })
+          .on('broadcast', { event: 'market_listing_cancelled' }, (payload: any) => {
+            try {
+              const data = payload?.payload || payload;
+              if (localBroadcastChannel) {
+                localBroadcastChannel.postMessage({ event: 'market_listing_cancelled', payload: data });
+              }
+            } catch {}
+          })
+          .on('broadcast', { event: 'market_listing_created' }, (payload: any) => {
+            try {
+              const data = payload?.payload || payload;
+              if (localBroadcastChannel) {
+                localBroadcastChannel.postMessage({ event: 'market_listing_created', payload: data });
               }
             } catch {}
           })
