@@ -1379,6 +1379,19 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           .on('broadcast', { event: 'market_listing_cancelled' }, (payload: any) => {
             try {
               const data = payload?.payload || payload;
+              const listingId = data?.listingId;
+              if (listingId) {
+                try {
+                  const stored = localStorage.getItem('mygacha_market_listings');
+                  if (stored) {
+                    const current = JSON.parse(stored);
+                    if (Array.isArray(current)) {
+                      const next = current.filter((l: any) => l.id !== listingId);
+                      localStorage.setItem('mygacha_market_listings', JSON.stringify(next));
+                    }
+                  }
+                } catch {}
+              }
               if (localBroadcastChannel) {
                 localBroadcastChannel.postMessage({ event: 'market_listing_cancelled', payload: data });
               }
@@ -1387,6 +1400,17 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           .on('broadcast', { event: 'market_listing_created' }, (payload: any) => {
             try {
               const data = payload?.payload || payload;
+              const newListing = data?.listing;
+              if (newListing) {
+                try {
+                  const stored = localStorage.getItem('mygacha_market_listings');
+                  const current = stored ? JSON.parse(stored) : [];
+                  if (Array.isArray(current)) {
+                    const next = [newListing, ...current.filter((l: any) => l.id !== newListing.id)];
+                    localStorage.setItem('mygacha_market_listings', JSON.stringify(next));
+                  }
+                } catch {}
+              }
               if (localBroadcastChannel) {
                 localBroadcastChannel.postMessage({ event: 'market_listing_created', payload: data });
               }
@@ -3198,8 +3222,8 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (isSupabaseConfigured && supabase) {
         try {
           const emptyBlob = new Blob(['[]'], { type: 'application/json' });
-          await supabase.storage.from('mygacha').upload('system/market_listings.json', emptyBlob, { upsert: true });
-          await supabase.storage.from('mygacha').upload('system/market_history.json', emptyBlob, { upsert: true });
+          await supabase.storage.from('mygacha').upload('system/market_listings.json', emptyBlob, { upsert: true, cacheControl: '0' });
+          await supabase.storage.from('mygacha').upload('system/market_history.json', emptyBlob, { upsert: true, cacheControl: '0' });
         } catch (e) {
           console.warn('Supabase clear marketplace storage failed:', e);
         }
