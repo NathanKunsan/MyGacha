@@ -1876,33 +1876,6 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           });
         }
 
-        // Heal/alias any cards whose ID was updated during pack editing
-        packs.forEach(p => {
-          (p.cards || []).forEach(c => {
-            if (!c.id) return;
-            const cleanName = getCardDisplayName(c.name).trim().toLowerCase();
-            const cleanRarity = (c.rarity || '').trim().toLowerCase();
-
-            p.cards.forEach(otherC => {
-              if (otherC.id === c.id) return;
-              const otherCleanName = getCardDisplayName(otherC.name).trim().toLowerCase();
-              const otherCleanRarity = (otherC.rarity || '').trim().toLowerCase();
-              if (otherCleanName === cleanName && otherCleanRarity === cleanRarity) {
-                const oldQty = merged[otherC.id] || 0;
-                if (oldQty > (merged[c.id] || 0)) {
-                  merged[c.id] = oldQty;
-                  changed = true;
-                }
-                const oldFoil = merged[`${otherC.id}_foil`] || 0;
-                if (oldFoil > (merged[`${c.id}_foil`] || 0)) {
-                  merged[`${c.id}_foil`] = oldFoil;
-                  changed = true;
-                }
-              }
-            });
-          });
-        });
-
         // Sync any local cards not present on remote
         if (remoteInventory) {
           Object.entries(merged).forEach(([cardId, qty]) => {
@@ -1922,7 +1895,7 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch (err) {
       console.warn('Failed to refresh user inventory:', err);
     }
-  }, [currentUser?.id, packs]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (currentUser?.id) {
