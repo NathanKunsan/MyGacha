@@ -641,7 +641,16 @@ let _sharedRealtimeChannel: any = null;
 export const getSharedRealtimeChannel = () => {
   if (!supabase) return null;
   if (!_sharedRealtimeChannel) {
-    _sharedRealtimeChannel = supabase.channel(REALTIME_CHANNEL_NAME);
+    _sharedRealtimeChannel = supabase.channel(REALTIME_CHANNEL_NAME, {
+      config: {
+        broadcast: { ack: true, self: false },
+      },
+    });
+    _sharedRealtimeChannel.subscribe((status: string) => {
+      if (status === 'SUBSCRIBED') {
+        // Connected to realtime global channel
+      }
+    });
   }
   return _sharedRealtimeChannel;
 };
@@ -860,6 +869,28 @@ export const deleteReportInSupabase = async (reportId: string): Promise<boolean>
 export const fetchMarketListingsFromSupabase = async (): Promise<MarketListing[]> => {
   if (supabase) {
     try {
+      // 1. Direct fetch with cache-busting timestamp and no-cache headers to bypass Cloudflare/browser cache
+      const { data: urlData } = supabase.storage.from('mygacha').getPublicUrl('system/market_listings.json');
+      if (urlData?.publicUrl) {
+        try {
+          const res = await fetch(`${urlData.publicUrl}?t=${Date.now()}_${Math.random()}`, {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              Pragma: 'no-cache',
+            },
+          });
+          if (res.ok) {
+            const parsed = await res.json();
+            if (Array.isArray(parsed)) {
+              localStorage.setItem('mygacha_market_listings', JSON.stringify(parsed));
+              return parsed;
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Fallback to Supabase download()
       const { data, error } = await supabase.storage.from('mygacha').download('system/market_listings.json');
       if (!error && data) {
         const text = await data.text();
@@ -895,6 +926,7 @@ export const saveMarketListingsToSupabase = async (listings: MarketListing[]): P
     await supabase.storage.from('mygacha').upload('system/market_listings.json', blob, {
       upsert: true,
       contentType: 'application/json',
+      cacheControl: '0',
     });
   } catch (err) {
     console.error('Failed to save market listings to Supabase Storage:', err);
@@ -907,6 +939,28 @@ export const saveMarketListingsToSupabase = async (listings: MarketListing[]): P
 export const fetchMarketHistoryFromSupabase = async (): Promise<MarketHistoryItem[]> => {
   if (supabase) {
     try {
+      // 1. Direct fetch with cache-busting timestamp
+      const { data: urlData } = supabase.storage.from('mygacha').getPublicUrl('system/market_history.json');
+      if (urlData?.publicUrl) {
+        try {
+          const res = await fetch(`${urlData.publicUrl}?t=${Date.now()}_${Math.random()}`, {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              Pragma: 'no-cache',
+            },
+          });
+          if (res.ok) {
+            const parsed = await res.json();
+            if (Array.isArray(parsed)) {
+              localStorage.setItem('mygacha_market_history', JSON.stringify(parsed));
+              return parsed;
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Fallback to Supabase download()
       const { data, error } = await supabase.storage.from('mygacha').download('system/market_history.json');
       if (!error && data) {
         const text = await data.text();
@@ -942,6 +996,7 @@ export const saveMarketHistoryToSupabase = async (history: MarketHistoryItem[]):
     await supabase.storage.from('mygacha').upload('system/market_history.json', blob, {
       upsert: true,
       contentType: 'application/json',
+      cacheControl: '0',
     });
   } catch (err) {
     console.error('Failed to save market history to Supabase Storage:', err);
