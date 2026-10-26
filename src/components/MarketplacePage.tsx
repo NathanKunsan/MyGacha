@@ -10,6 +10,8 @@ import {
   saveMarketHistoryToSupabase,
   broadcastRealtimeEvent,
   localBroadcastChannel,
+  getSharedRealtimeChannel,
+  REALTIME_CHANNEL_NAME,
   supabase,
 } from '../lib/supabase';
 import { sound } from '../utils/sound';
@@ -39,17 +41,19 @@ export const MarketplacePage: React.FC = () => {
     addCardsToInventory,
     removeCardFromInventory,
     refreshUserInventory,
+    refreshPacks,
     addToast,
     language,
     navigate,
   } = useGacha();
 
-  // Auto-sync user inventory on mount
+  // Auto-sync user inventory and published packs on mount
   useEffect(() => {
     if (currentUser?.id) {
       refreshUserInventory();
     }
-  }, [currentUser?.id, refreshUserInventory]);
+    refreshPacks();
+  }, [currentUser?.id, refreshUserInventory, refreshPacks]);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<'market' | 'my-listings' | 'history'>('market');
@@ -123,36 +127,46 @@ export const MarketplacePage: React.FC = () => {
   useEffect(() => {
     refreshMarketData();
 
-    // 1. Direct Supabase Realtime broadcast listener (instant cross-machine sync!)
-    let realtimeChannel: any = null;
-    if (supabase) {
-      realtimeChannel = supabase
-        .channel('market_realtime_sync')
+    // 1. Direct Supabase Realtime broadcast listener (instant cross-machine & cross-browser sync!)
+    const sharedChannel = getSharedRealtimeChannel();
+    if (sharedChannel) {
+      sharedChannel
         .on('broadcast', { event: 'market_card_bought' }, (payload: any) => {
           const data = payload?.payload || payload;
           const listingId = data?.listingId;
           if (listingId) {
-            setListings(prev => prev.filter(l => l.id !== listingId));
+            setListings(prev => {
+              const next = prev.filter(l => l.id !== listingId);
+              try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
+              return next;
+            });
           }
-          refreshMarketData();
         })
         .on('broadcast', { event: 'market_listing_cancelled' }, (payload: any) => {
           const data = payload?.payload || payload;
           const listingId = data?.listingId;
           if (listingId) {
-            setListings(prev => prev.filter(l => l.id !== listingId));
+            setListings(prev => {
+              const next = prev.filter(l => l.id !== listingId);
+              try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
+              return next;
+            });
           }
-          refreshMarketData();
         })
         .on('broadcast', { event: 'market_listing_created' }, (payload: any) => {
           const data = payload?.payload || payload;
           const newListing = data?.listing;
           if (newListing) {
-            setListings(prev => [newListing, ...prev.filter(l => l.id !== newListing.id)]);
+            setListings(prev => {
+              const next = [newListing, ...prev.filter(l => l.id !== newListing.id)];
+              try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
+              return next;
+            });
           }
-          refreshMarketData();
         })
-        .subscribe();
+        .on('broadcast', { event: 'marketplace_updated' }, () => {
+          refreshMarketData();
+        });
     }
 
     // 2. Cross-tab local broadcast listener (instant same-machine tab sync!)
@@ -161,21 +175,30 @@ export const MarketplacePage: React.FC = () => {
       if (event === 'market_card_bought') {
         const listingId = payload?.listingId;
         if (listingId) {
-          setListings(prev => prev.filter(l => l.id !== listingId));
+          setListings(prev => {
+            const next = prev.filter(l => l.id !== listingId);
+            try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
+            return next;
+          });
         }
-        refreshMarketData();
       } else if (event === 'market_listing_cancelled') {
         const listingId = payload?.listingId;
         if (listingId) {
-          setListings(prev => prev.filter(l => l.id !== listingId));
+          setListings(prev => {
+            const next = prev.filter(l => l.id !== listingId);
+            try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
+            return next;
+          });
         }
-        refreshMarketData();
       } else if (event === 'market_listing_created') {
         const newListing = payload?.listing;
         if (newListing) {
-          setListings(prev => [newListing, ...prev.filter(l => l.id !== newListing.id)]);
+          setListings(prev => {
+            const next = [newListing, ...prev.filter(l => l.id !== newListing.id)];
+            try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
+            return next;
+          });
         }
-        refreshMarketData();
       } else if (
         event === 'marketplace_updated' ||
         event === 'member_avatar_updated'
@@ -192,9 +215,6 @@ export const MarketplacePage: React.FC = () => {
     const pollTimer = setInterval(refreshMarketData, 3500);
 
     return () => {
-      if (realtimeChannel && supabase) {
-        supabase.removeChannel(realtimeChannel);
-      }
       if (localBroadcastChannel) {
         localBroadcastChannel.removeEventListener('message', handleBroadcast);
       }
@@ -291,9 +311,18 @@ export const MarketplacePage: React.FC = () => {
   const filteredListings = useMemo(() => {
     return listings
       .filter((item) => {
-        // Never show listings from packs that are NOT published!
-        if (!publishedPackIds.has(item.packId)) {
-          return false;
+        // Filter by published packs safely without dropping valid listings when packs are loading
+        if (publishedPacks.length > 0) {
+          const isPublished =
+            publishedPackIds.has(item.packId) ||
+            publishedPacks.some(
+              (p) =>
+                (item.packName && p.seriesName.trim().toLowerCase() === item.packName.trim().toLowerCase()) ||
+                (item.franchiseName && p.franchiseName.trim().toLowerCase() === item.franchiseName.trim().toLowerCase())
+            );
+          if (!isPublished) {
+            return false;
+          }
         }
 
         if (filterFoilOnly && !item.isFoil) {
@@ -334,7 +363,7 @@ export const MarketplacePage: React.FC = () => {
         if (sortBy === 'price-desc') return b.price - a.price;
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
-  }, [listings, currentUser, searchKeyword, selectedFranchise, selectedPackId, selectedRarity, filterFoilOnly, sortBy, publishedPackIds]);
+  }, [listings, currentUser, searchKeyword, selectedFranchise, selectedPackId, selectedRarity, filterFoilOnly, sortBy, publishedPackIds, publishedPacks]);
 
   // User's own listings
   const myListings = useMemo(() => {
