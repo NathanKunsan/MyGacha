@@ -66,6 +66,10 @@ export const MarketplacePage: React.FC = () => {
   const [isSellModalOpen, setIsSellModalOpen] = useState(false);
   const [selectedListingToBuy, setSelectedListingToBuy] = useState<MarketListing | null>(null);
 
+  // In-flight processing tracking to prevent double-click and duplication race conditions
+  const [cancellingListingIds, setCancellingListingIds] = useState<Set<string>>(new Set());
+  const [buyingListingIds, setBuyingListingIds] = useState<Set<string>>(new Set());
+
   // Sell form state
   const [selectedCardToSell, setSelectedCardToSell] = useState<CardItem | null>(null);
   const [sellPrice, setSellPrice] = useState<number>(500);
@@ -119,13 +123,60 @@ export const MarketplacePage: React.FC = () => {
   useEffect(() => {
     refreshMarketData();
 
-    // Cross-tab broadcast listener
+    // 1. Direct Supabase Realtime broadcast listener (instant cross-machine sync!)
+    let realtimeChannel: any = null;
+    if (supabase) {
+      realtimeChannel = supabase
+        .channel('market_realtime_sync')
+        .on('broadcast', { event: 'market_card_bought' }, (payload: any) => {
+          const data = payload?.payload || payload;
+          const listingId = data?.listingId;
+          if (listingId) {
+            setListings(prev => prev.filter(l => l.id !== listingId));
+          }
+          refreshMarketData();
+        })
+        .on('broadcast', { event: 'market_listing_cancelled' }, (payload: any) => {
+          const data = payload?.payload || payload;
+          const listingId = data?.listingId;
+          if (listingId) {
+            setListings(prev => prev.filter(l => l.id !== listingId));
+          }
+          refreshMarketData();
+        })
+        .on('broadcast', { event: 'market_listing_created' }, (payload: any) => {
+          const data = payload?.payload || payload;
+          const newListing = data?.listing;
+          if (newListing) {
+            setListings(prev => [newListing, ...prev.filter(l => l.id !== newListing.id)]);
+          }
+          refreshMarketData();
+        })
+        .subscribe();
+    }
+
+    // 2. Cross-tab local broadcast listener (instant same-machine tab sync!)
     const handleBroadcast = (e: MessageEvent) => {
-      const { event } = e.data || {};
-      if (
-        event === 'market_listing_created' ||
-        event === 'market_listing_cancelled' ||
-        event === 'market_card_bought' ||
+      const { event, payload } = e.data || {};
+      if (event === 'market_card_bought') {
+        const listingId = payload?.listingId;
+        if (listingId) {
+          setListings(prev => prev.filter(l => l.id !== listingId));
+        }
+        refreshMarketData();
+      } else if (event === 'market_listing_cancelled') {
+        const listingId = payload?.listingId;
+        if (listingId) {
+          setListings(prev => prev.filter(l => l.id !== listingId));
+        }
+        refreshMarketData();
+      } else if (event === 'market_listing_created') {
+        const newListing = payload?.listing;
+        if (newListing) {
+          setListings(prev => [newListing, ...prev.filter(l => l.id !== newListing.id)]);
+        }
+        refreshMarketData();
+      } else if (
         event === 'marketplace_updated' ||
         event === 'member_avatar_updated'
       ) {
@@ -137,10 +188,13 @@ export const MarketplacePage: React.FC = () => {
       localBroadcastChannel.addEventListener('message', handleBroadcast);
     }
 
-    // Polling every 3.5 seconds for cross-machine updates
+    // 3. Fallback polling every 3.5 seconds
     const pollTimer = setInterval(refreshMarketData, 3500);
 
     return () => {
+      if (realtimeChannel && supabase) {
+        supabase.removeChannel(realtimeChannel);
+      }
       if (localBroadcastChannel) {
         localBroadcastChannel.removeEventListener('message', handleBroadcast);
       }
@@ -237,9 +291,6 @@ export const MarketplacePage: React.FC = () => {
   const filteredListings = useMemo(() => {
     return listings
       .filter((item) => {
-        // Exclude user's own listings from the public browse view
-        if (currentUser && item.sellerId === currentUser.id) return false;
-
         // Never show listings from packs that are NOT published!
         if (!publishedPackIds.has(item.packId)) {
           return false;
@@ -315,8 +366,8 @@ export const MarketplacePage: React.FC = () => {
     return list;
   }, [currentUser, publishedPacks]);
 
-  // 0ms INSTANT OPTIMISTIC BUY: Zero UI lag with background Supabase sync
-  const handleConfirmBuy = () => {
+  // 0ms INSTANT OPTIMISTIC BUY: Zero UI lag with background Supabase sync & Anti-duplication check
+  const handleConfirmBuy = async () => {
     if (!selectedListingToBuy) return;
     if (!currentUser) {
       addToast(language === 'th' ? 'กรุณาเข้าสู่ระบบก่อนซื้อการ์ด' : 'Please login to buy cards', 'warning');
@@ -345,206 +396,277 @@ export const MarketplacePage: React.FC = () => {
     const targetListing = selectedListingToBuy;
     const buyerUser = currentUser;
 
-    // 1. Instant 0ms Optimistic Update
-    spendCoins(targetListing.price);
+    if (buyingListingIds.has(targetListing.id)) return;
+    setBuyingListingIds(prev => new Set(prev).add(targetListing.id));
 
-    let targetCard: CardItem | undefined;
-    for (const p of packs) {
-      const found = p.cards.find(c => c.id === targetListing.cardId);
-      if (found) {
-        targetCard = found;
-        break;
-      }
-    }
-
-    const purchasedCard: CardItem = {
-      ...(targetCard || {
-        id: targetListing.cardId,
-        packId: targetListing.packId,
-        name: targetListing.cardName,
-        imageUrl: targetListing.cardImageUrl,
-        rarity: targetListing.rarity,
-        fields: [],
-      }),
-      isFoil: targetListing.isFoil,
-    };
-
-    addCardsToInventory(targetListing.packId, [purchasedCard]);
-
-    const nextListings = listings.filter(l => l.id !== targetListing.id);
-    setListings(nextListings);
     try {
-      localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(nextListings));
-    } catch {}
+      // 1. Anti-race condition / anti-duplication check: Verify card is still available
+      const freshListings = await fetchMarketListingsFromSupabase();
+      const stillAvailable = freshListings.some(l => l.id === targetListing.id);
 
-    const buyerHistory: MarketHistoryItem = {
-      id: `trade_${Date.now()}_buy`,
-      cardName: targetListing.cardName,
-      cardImageUrl: targetListing.cardImageUrl,
-      rarity: targetListing.rarity,
-      rarityColor: targetListing.rarityColor,
-      price: targetListing.price,
-      type: 'buy',
-      buyerId: buyerUser.id,
-      sellerId: targetListing.sellerId,
-      counterparty: targetListing.sellerUsername,
-      timestamp: new Date().toISOString(),
-      isFoil: targetListing.isFoil,
-    };
-
-    const sellerHistory: MarketHistoryItem = {
-      id: `trade_${Date.now()}_sell`,
-      cardName: targetListing.cardName,
-      cardImageUrl: targetListing.cardImageUrl,
-      rarity: targetListing.rarity,
-      rarityColor: targetListing.rarityColor,
-      price: targetListing.price,
-      type: 'sell',
-      buyerId: buyerUser.id,
-      sellerId: targetListing.sellerId,
-      counterparty: buyerUser.username,
-      timestamp: new Date().toISOString(),
-      isFoil: targetListing.isFoil,
-    };
-
-    setHistory(prev => [buyerHistory, ...prev]);
-
-    // Close modal & give instant audio/toast feedback (0ms perceived latency!)
-    setSelectedListingToBuy(null);
-    try { sound.playRareFanfare(); } catch {}
-
-    addToast(
-      language === 'th'
-        ? `ซื้อการ์ด ${getCardDisplayName(targetListing.cardName)}${targetListing.isFoil ? ' (ฟอยล์)' : ''} สำเร็จ!`
-        : `Successfully purchased ${getCardDisplayName(targetListing.cardName)}${targetListing.isFoil ? ' (Foil)' : ''}!`,
-      'success'
-    );
-
-    // 2. Non-blocking Background Sync
-    (async () => {
-      try {
-        if (supabase && targetListing.sellerId) {
-          const { data: sProf } = await supabase
-            .from('profiles')
-            .select('coins')
-            .eq('id', targetListing.sellerId)
-            .maybeSingle();
-
-          const curSellerCoins = Number(sProf?.coins || 0);
-          const newSellerCoins = curSellerCoins + targetListing.price;
-          await supabase
-            .from('profiles')
-            .update({ coins: newSellerCoins, updated_at: new Date().toISOString() })
-            .eq('id', targetListing.sellerId);
-        }
-
-        try {
-          const rawAccounts = localStorage.getItem('mygacha_accounts_v2');
-          if (rawAccounts) {
-            const accounts = JSON.parse(rawAccounts);
-            if (Array.isArray(accounts)) {
-              const updated = accounts.map((a: any) => {
-                if (
-                  a.id === targetListing.sellerId ||
-                  a.username?.toLowerCase() === targetListing.sellerUsername.toLowerCase()
-                ) {
-                  return { ...a, coins: (a.coins || 0) + targetListing.price };
-                }
-                return a;
-              });
-              localStorage.setItem('mygacha_accounts_v2', JSON.stringify(updated));
-            } else if (typeof accounts === 'object') {
-              Object.values(accounts).forEach((a: any) => {
-                if (
-                  a.id === targetListing.sellerId ||
-                  a.username?.toLowerCase() === targetListing.sellerUsername.toLowerCase()
-                ) {
-                  a.coins = (a.coins || 0) + targetListing.price;
-                }
-              });
-              localStorage.setItem('mygacha_accounts_v2', JSON.stringify(accounts));
-            }
-          }
-        } catch {}
-
-        const freshListings = await fetchMarketListingsFromSupabase();
-        const synced = freshListings.filter(l => l.id !== targetListing.id);
-        await saveMarketListingsToSupabase(synced);
-
-        const freshHistory = await fetchMarketHistoryFromSupabase();
-        const syncedHistory = [buyerHistory, sellerHistory, ...freshHistory].slice(0, 100);
-        await saveMarketHistoryToSupabase(syncedHistory);
-
-        broadcastRealtimeEvent('market_card_bought', {
-          listingId: targetListing.id,
-          sellerId: targetListing.sellerId,
-          sellerUsername: targetListing.sellerUsername,
-          buyerId: buyerUser.id,
-          buyerUsername: buyerUser.username,
-          cardId: targetListing.cardId,
-          cardName: targetListing.cardName,
-          price: targetListing.price,
-          isFoil: targetListing.isFoil,
-        });
-
-        broadcastRealtimeEvent('member_coins_updated', {
-          username: targetListing.sellerUsername,
-          memberId: targetListing.sellerId,
-        });
-      } catch (err) {
-        console.warn('Background purchase sync error:', err);
+      if (!stillAvailable) {
+        setListings(prev => prev.filter(l => l.id !== targetListing.id));
+        setSelectedListingToBuy(null);
+        addToast(
+          language === 'th'
+            ? 'การ์ดใบนี้ถูกซื้อหรือถูกยกเลิกไปแล้ว'
+            : 'This card is no longer available.',
+          'warning'
+        );
+        return;
       }
-    })();
+
+      // 2. Remove listing from remote Supabase storage FIRST
+      const synced = freshListings.filter(l => l.id !== targetListing.id);
+      await saveMarketListingsToSupabase(synced);
+
+      // 3. Instant 0ms Optimistic Update for buyer
+      spendCoins(targetListing.price);
+
+      let targetCard: CardItem | undefined;
+      for (const p of packs) {
+        const found = p.cards.find(c => c.id === targetListing.cardId);
+        if (found) {
+          targetCard = found;
+          break;
+        }
+      }
+
+      const purchasedCard: CardItem = {
+        ...(targetCard || {
+          id: targetListing.cardId,
+          packId: targetListing.packId,
+          name: targetListing.cardName,
+          imageUrl: targetListing.cardImageUrl,
+          rarity: targetListing.rarity,
+          fields: [],
+        }),
+        isFoil: targetListing.isFoil,
+      };
+
+      addCardsToInventory(targetListing.packId, [purchasedCard]);
+
+      setListings(synced);
+      try {
+        localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(synced));
+      } catch {}
+
+      const buyerHistory: MarketHistoryItem = {
+        id: `trade_${Date.now()}_buy`,
+        cardName: targetListing.cardName,
+        cardImageUrl: targetListing.cardImageUrl,
+        rarity: targetListing.rarity,
+        rarityColor: targetListing.rarityColor,
+        price: targetListing.price,
+        type: 'buy',
+        buyerId: buyerUser.id,
+        sellerId: targetListing.sellerId,
+        counterparty: targetListing.sellerUsername,
+        timestamp: new Date().toISOString(),
+        isFoil: targetListing.isFoil,
+      };
+
+      const sellerHistory: MarketHistoryItem = {
+        id: `trade_${Date.now()}_sell`,
+        cardName: targetListing.cardName,
+        cardImageUrl: targetListing.cardImageUrl,
+        rarity: targetListing.rarity,
+        rarityColor: targetListing.rarityColor,
+        price: targetListing.price,
+        type: 'sell',
+        buyerId: buyerUser.id,
+        sellerId: targetListing.sellerId,
+        counterparty: buyerUser.username,
+        timestamp: new Date().toISOString(),
+        isFoil: targetListing.isFoil,
+      };
+
+      setHistory(prev => [buyerHistory, ...prev]);
+
+      // Close modal & give instant audio/toast feedback
+      setSelectedListingToBuy(null);
+      try { sound.playRareFanfare(); } catch {}
+
+      addToast(
+        language === 'th'
+          ? `ซื้อการ์ด ${getCardDisplayName(targetListing.cardName)}${targetListing.isFoil ? ' (ฟอยล์)' : ''} สำเร็จ!`
+          : `Successfully purchased ${getCardDisplayName(targetListing.cardName)}${targetListing.isFoil ? ' (Foil)' : ''}!`,
+        'success'
+      );
+
+      // 4. Background Sync: Credit seller and record history
+      (async () => {
+        try {
+          if (supabase && targetListing.sellerId) {
+            const { data: sProf } = await supabase
+              .from('profiles')
+              .select('coins')
+              .eq('id', targetListing.sellerId)
+              .maybeSingle();
+
+            const curSellerCoins = Number(sProf?.coins || 0);
+            const newSellerCoins = curSellerCoins + targetListing.price;
+            await supabase
+              .from('profiles')
+              .update({ coins: newSellerCoins, updated_at: new Date().toISOString() })
+              .eq('id', targetListing.sellerId);
+          }
+
+          try {
+            const rawAccounts = localStorage.getItem('mygacha_accounts_v2');
+            if (rawAccounts) {
+              const accounts = JSON.parse(rawAccounts);
+              if (Array.isArray(accounts)) {
+                const updated = accounts.map((a: any) => {
+                  if (
+                    a.id === targetListing.sellerId ||
+                    a.username?.toLowerCase() === targetListing.sellerUsername.toLowerCase()
+                  ) {
+                    return { ...a, coins: (a.coins || 0) + targetListing.price };
+                  }
+                  return a;
+                });
+                localStorage.setItem('mygacha_accounts_v2', JSON.stringify(updated));
+              } else if (typeof accounts === 'object') {
+                Object.values(accounts).forEach((a: any) => {
+                  if (
+                    a.id === targetListing.sellerId ||
+                    a.username?.toLowerCase() === targetListing.sellerUsername.toLowerCase()
+                  ) {
+                    a.coins = (a.coins || 0) + targetListing.price;
+                  }
+                });
+                localStorage.setItem('mygacha_accounts_v2', JSON.stringify(accounts));
+              }
+            }
+          } catch {}
+
+          const freshHistory = await fetchMarketHistoryFromSupabase();
+          const syncedHistory = [buyerHistory, sellerHistory, ...freshHistory].slice(0, 100);
+          await saveMarketHistoryToSupabase(syncedHistory);
+
+          broadcastRealtimeEvent('market_card_bought', {
+            listingId: targetListing.id,
+            sellerId: targetListing.sellerId,
+            sellerUsername: targetListing.sellerUsername,
+            buyerId: buyerUser.id,
+            buyerUsername: buyerUser.username,
+            cardId: targetListing.cardId,
+            cardName: targetListing.cardName,
+            price: targetListing.price,
+            isFoil: targetListing.isFoil,
+          });
+
+          if (localBroadcastChannel) {
+            localBroadcastChannel.postMessage({
+              event: 'market_card_bought',
+              payload: { listingId: targetListing.id },
+            });
+          }
+
+          broadcastRealtimeEvent('member_coins_updated', {
+            username: targetListing.sellerUsername,
+            memberId: targetListing.sellerId,
+          });
+        } catch (err) {
+          console.warn('Background purchase sync error:', err);
+        }
+      })();
+    } catch (err) {
+      console.error('Buy error:', err);
+      addToast(language === 'th' ? 'เกิดข้อผิดพลาดในการซื้อการ์ด' : 'Error purchasing card', 'error');
+    } finally {
+      setBuyingListingIds(prev => {
+        const next = new Set(prev);
+        next.delete(targetListing.id);
+        return next;
+      });
+    }
   };
 
-  // 0ms INSTANT OPTIMISTIC DELIST: Zero UI lag with background Supabase sync
-  const handleDelist = (listing: MarketListing) => {
+  // 0ms INSTANT OPTIMISTIC DELIST: With Anti-Duplication Protection
+  const handleDelist = async (listing: MarketListing) => {
     if (!currentUser) return;
     if (currentUser.id !== listing.sellerId && currentUser.role !== 'Admin') {
       addToast(language === 'th' ? 'คุณไม่มีสิทธิ์ยกเลิกการขายการ์ดนี้' : 'You cannot cancel this listing', 'error');
       return;
     }
 
-    // 1. Instant 0ms Optimistic Update
-    const nextListings = listings.filter(l => l.id !== listing.id);
-    setListings(nextListings);
+    if (cancellingListingIds.has(listing.id)) return;
+    setCancellingListingIds(prev => new Set(prev).add(listing.id));
+
     try {
-      localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(nextListings));
-    } catch {}
+      // 1. Anti-duplication check: verify listing is still active in Supabase before returning card!
+      const freshListings = await fetchMarketListingsFromSupabase();
+      const isActive = freshListings.some(l => l.id === listing.id);
 
-    const targetPack = packs.find(p => p.id === listing.packId);
-    const targetCard: CardItem = {
-      ...(targetPack?.cards.find(c => c.id === listing.cardId) || {
-        id: listing.cardId,
-        packId: listing.packId,
-        name: listing.cardName,
-        imageUrl: listing.cardImageUrl,
-        rarity: listing.rarity,
-        fields: [],
-      }),
-      isFoil: listing.isFoil,
-    };
+      if (!isActive) {
+        // Card was already bought by someone else or cancelled!
+        setListings(prev => prev.filter(l => l.id !== listing.id));
+        try {
+          localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(freshListings));
+        } catch {}
 
-    addCardsToInventory(listing.packId, [targetCard]);
-
-    addToast(
-      language === 'th'
-        ? `ยกเลิกการขายการ์ด ${getCardDisplayName(listing.cardName)}${listing.isFoil ? ' (ฟอยล์)' : ''} และคืนเข้าคลังเรียบร้อย`
-        : `Cancelled listing and returned card to your inventory`,
-      'info'
-    );
-
-    // 2. Non-blocking Background Sync
-    (async () => {
-      try {
-        const freshListings = await fetchMarketListingsFromSupabase();
-        const synced = freshListings.filter(l => l.id !== listing.id);
-        await saveMarketListingsToSupabase(synced);
-        broadcastRealtimeEvent('market_listing_cancelled', { listingId: listing.id });
-      } catch (err) {
-        console.warn('Background delist sync error:', err);
+        addToast(
+          language === 'th'
+            ? 'การ์ดใบนี้ถูกซื้อไปแล้วหรือถูกยกเลิกแล้ว ไม่สามารถยกเลิกการขายซ้ำได้'
+            : 'This card has already been sold or cancelled.',
+          'warning'
+        );
+        return;
       }
-    })();
+
+      // 2. Remove listing from Supabase storage FIRST
+      const synced = freshListings.filter(l => l.id !== listing.id);
+      await saveMarketListingsToSupabase(synced);
+
+      // 3. Update local state
+      setListings(synced);
+      try {
+        localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(synced));
+      } catch {}
+
+      // 4. Safely return card to seller inventory
+      const targetPack = packs.find(p => p.id === listing.packId);
+      const targetCard: CardItem = {
+        ...(targetPack?.cards.find(c => c.id === listing.cardId) || {
+          id: listing.cardId,
+          packId: listing.packId,
+          name: listing.cardName,
+          imageUrl: listing.cardImageUrl,
+          rarity: listing.rarity,
+          fields: [],
+        }),
+        isFoil: listing.isFoil,
+      };
+
+      addCardsToInventory(listing.packId, [targetCard]);
+
+      // 5. Broadcast to all machines and tabs
+      broadcastRealtimeEvent('market_listing_cancelled', { listingId: listing.id });
+      if (localBroadcastChannel) {
+        localBroadcastChannel.postMessage({
+          event: 'market_listing_cancelled',
+          payload: { listingId: listing.id },
+        });
+      }
+
+      addToast(
+        language === 'th'
+          ? `ยกเลิกการขายการ์ด ${getCardDisplayName(listing.cardName)}${listing.isFoil ? ' (ฟอยล์)' : ''} และคืนเข้าคลังเรียบร้อย`
+          : `Cancelled listing and returned card to your inventory`,
+        'info'
+      );
+    } catch (err) {
+      console.warn('Delist error:', err);
+      addToast(language === 'th' ? 'เกิดข้อผิดพลาดในการยกเลิกการขาย' : 'Error cancelling listing', 'error');
+    } finally {
+      setCancellingListingIds(prev => {
+        const next = new Set(prev);
+        next.delete(listing.id);
+        return next;
+      });
+    }
   };
 
   // 0ms INSTANT OPTIMISTIC LISTING: Zero UI lag with background Supabase sync
@@ -897,6 +1019,9 @@ export const MarketplacePage: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 sm:gap-4">
               {filteredListings.map((listing) => {
                 const ownedCount = currentUser?.inventory?.[listing.cardId] || 0;
+                const isOwnListing = Boolean(currentUser && listing.sellerId === currentUser.id);
+                const isCancelling = cancellingListingIds.has(listing.id);
+                const isBuying = buyingListingIds.has(listing.id);
 
                 return (
                   <div
@@ -919,20 +1044,26 @@ export const MarketplacePage: React.FC = () => {
                         {listing.rarity}
                       </span>
 
-                      {/* Foil Badge */}
-                      {listing.isFoil && (
-                        <span className="absolute top-2 right-2 z-10 px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded foil-badge flex items-center gap-0.5 shadow-xs">
-                          <Sparkles size={9} className="text-yellow-950" />
-                          <span>FOIL</span>
-                        </span>
-                      )}
-
-                      {/* Owned Pill */}
-                      {!listing.isFoil && (
-                        <span className="absolute top-2 right-2 z-10 text-[9px] font-bold px-1.5 py-0.5 rounded bg-black/60 text-white backdrop-blur-xs">
-                          {language === 'th' ? `มีแล้ว ${ownedCount}` : `Owned: ${ownedCount}`}
-                        </span>
-                      )}
+                      {/* Top Right Badges */}
+                      <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+                        {listing.isFoil && (
+                          <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded foil-badge flex items-center gap-0.5 shadow-xs">
+                            <Sparkles size={9} className="text-yellow-950" />
+                            <span>FOIL</span>
+                          </span>
+                        )}
+                        {isOwnListing ? (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-blue-600 text-white border border-black shadow-xs">
+                            {language === 'th' ? 'การ์ดของคุณ' : 'Your Listing'}
+                          </span>
+                        ) : (
+                          !listing.isFoil && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-black/60 text-white backdrop-blur-xs">
+                              {language === 'th' ? `มีแล้ว ${ownedCount}` : `Owned: ${ownedCount}`}
+                            </span>
+                          )
+                        )}
+                      </div>
 
                       {listing.cardImageUrl ? (
                         <img
@@ -973,15 +1104,36 @@ export const MarketplacePage: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* Buy Button */}
-                        <button
-                          type="button"
-                          onClick={() => setSelectedListingToBuy(listing)}
-                          className="w-full py-1.5 text-xs font-bold bg-yellow-400 hover:bg-yellow-300 text-black border border-black rounded-lg sketch-btn shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center gap-1 font-['Mali']"
-                        >
-                          <ShoppingBag size={13} />
-                          <span>{language === 'th' ? 'ซื้อการ์ด' : 'Buy Card'}</span>
-                        </button>
+                        {/* Action Button: Delist if own card, Buy if other's card */}
+                        {isOwnListing ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDelist(listing)}
+                            disabled={isCancelling}
+                            className="w-full py-1.5 text-xs font-bold bg-red-100 hover:bg-red-200 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-black rounded-lg sketch-btn shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center gap-1 font-['Mali'] disabled:opacity-50"
+                          >
+                            <Trash2 size={13} />
+                            <span>
+                              {isCancelling
+                                ? (language === 'th' ? 'กำลังยกเลิก...' : 'Cancelling...')
+                                : (language === 'th' ? 'ยกเลิกการขาย (การ์ดของคุณ)' : 'Cancel Listing')}
+                            </span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedListingToBuy(listing)}
+                            disabled={isBuying}
+                            className="w-full py-1.5 text-xs font-bold bg-yellow-400 hover:bg-yellow-300 text-black border border-black rounded-lg sketch-btn shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center gap-1 font-['Mali'] disabled:opacity-50"
+                          >
+                            <ShoppingBag size={13} />
+                            <span>
+                              {isBuying
+                                ? (language === 'th' ? 'กำลังซื้อ...' : 'Buying...')
+                                : (language === 'th' ? 'ซื้อการ์ด' : 'Buy Card')}
+                            </span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1068,11 +1220,16 @@ export const MarketplacePage: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => handleDelist(listing)}
-                      className="px-2.5 py-1 text-[11px] font-bold bg-red-100 hover:bg-red-200 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-black rounded-lg flex items-center gap-1 transition-all"
+                      disabled={cancellingListingIds.has(listing.id)}
+                      className="px-2.5 py-1 text-[11px] font-bold bg-red-100 hover:bg-red-200 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-black rounded-lg flex items-center gap-1 transition-all disabled:opacity-50"
                       title={language === 'th' ? 'ยกเลิกการขายและคืนการ์ดเข้าคลัง' : 'Delist and return card'}
                     >
                       <Trash2 size={13} />
-                      <span>{language === 'th' ? 'ยกเลิกการขาย' : 'Delist'}</span>
+                      <span>
+                        {cancellingListingIds.has(listing.id)
+                          ? (language === 'th' ? 'กำลังยกเลิก...' : 'Cancelling...')
+                          : (language === 'th' ? 'ยกเลิกการขาย' : 'Delist')}
+                      </span>
                     </button>
                   </div>
                 </div>
