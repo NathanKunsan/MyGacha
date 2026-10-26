@@ -1,0 +1,253 @@
+/* Tailwind imports */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply select-none overflow-x-hidden;
+  }
+  img {
+    -webkit-user-drag: none;
+    -khtml-user-drag: none;
+    -moz-user-drag: none;
+    -o-user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Neo-Brutalist Form Elements Theme Styling */
+  select {
+    border: 2px solid #000;
+    border-radius: 12px;
+    font-family: 'Prompt', sans-serif;
+    font-weight: 700;
+    cursor: pointer;
+    outline: none;
+    accent-color: #facc15;
+  }
+  .dark select {
+    border-color: #fff;
+    background-color: #27272a;
+    color: #fff;
+  }
+  input[type="date"], input[type="datetime-local"] {
+    border: 2px solid #000;
+    border-radius: 12px;
+    font-family: 'Prompt', sans-serif;
+    font-weight: 700;
+    outline: none;
+    accent-color: #facc15;
+  }
+  .dark input[type="date"], .dark input[type="datetime-local"] {
+    border-color: #fff;
+    background-color: #27272a;
+    color: #fff;
+  }
+}
+
+/* Custom sketch-styled elements & animations */
+.sketch-border {
+  border: 2px solid #18181b;
+  border-radius: 12px;
+}
+
+.dark .sketch-border {
+  border: 2px solid #e4e4e7;
+}
+
+.sketch-box {
+  border: 2px solid #18181b;
+  box-shadow: 3px 3px 0px 0px rgba(0, 0, 0, 0.9);
+}
+
+.dark .sketch-box {
+  border: 2px solid #e4e4e7;
+  box-shadow: 3px 3px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+.sketch-btn {
+  border: 2px solid #18181b;
+  box-shadow: 2px 2px 0px 0px rgba(0, 0, 0, 0.9);
+  transition: transform 0.05s ease-out, box-shadow 0.05s ease-out, background-color 0.08s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sketch-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px 0px rgba(0, 0, 0, 0.9);
+}
+
+.sketch-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px 0px rgba(0, 0, 0, 0.9);
+}
+
+.dark .sketch-btn {
+  border: 2px solid #e4e4e7;
+  box-shadow: 2px 2px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+.dark .sketch-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+.dark .sketch-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px 0px rgba(255, 255, 255, 0.85);
+}
+
+/* Holographic shimmer effect for rare cards */
+@keyframes holoShimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.holo-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.holo-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 0, 150, 0.15) 0%,
+    rgba(0, 204, 255, 0.2) 25%,
+    rgba(255, 255, 0, 0.2) 50%,
+    rgba(0, 255, 128, 0.2) 75%,
+    rgba(255, 0, 150, 0.15) 100%
+  );
+  background-size: 300% 300%;
+  animation: holoShimmer 4s ease infinite;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+/* Holographic Foil Card System */
+@keyframes foilSweep {
+  0% {
+    transform: translateX(-150%) translateY(-50%) rotate(25deg);
+    opacity: 0.3;
+  }
+  35% {
+    opacity: 0.9;
+  }
+  70% {
+    transform: translateX(250%) translateY(-50%) rotate(25deg);
+    opacity: 0.3;
+  }
+  100% {
+    transform: translateX(250%) translateY(-50%) rotate(25deg);
+    opacity: 0;
+  }
+}
+
+@keyframes foilGlow {
+  0%, 100% {
+    box-shadow: 0 0 12px 2px rgba(250, 204, 21, 0.6), 0 0 4px rgba(244, 114, 182, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px rgba(56, 189, 248, 0.7), 0 0 6px rgba(168, 85, 247, 0.5);
+  }
+}
+
+.foil-card {
+  position: relative;
+  overflow: hidden;
+  animation: foilGlow 3s ease-in-out infinite;
+}
+
+.foil-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    125deg,
+    rgba(255, 0, 128, 0.22) 0%,
+    rgba(255, 200, 0, 0.25) 20%,
+    rgba(0, 255, 128, 0.22) 40%,
+    rgba(0, 200, 255, 0.28) 60%,
+    rgba(160, 0, 255, 0.25) 80%,
+    rgba(255, 0, 128, 0.22) 100%
+  );
+  background-size: 200% 200%;
+  animation: holoShimmer 3.5s ease infinite;
+  mix-blend-mode: color-dodge;
+  pointer-events: none;
+  z-index: 12;
+}
+
+.foil-card::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 300%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 20%,
+    rgba(255, 255, 255, 0.65) 50%,
+    rgba(255, 255, 255, 0.1) 80%,
+    transparent 100%
+  );
+  animation: foilSweep 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 13;
+}
+
+.foil-badge {
+  background: linear-gradient(135deg, #fef08a, #f472b6 50%, #67e8f9);
+  color: #000000;
+  font-weight: 900;
+  border: 1.5px solid #000000;
+  box-shadow: 1px 1px 0px 0px rgba(0, 0, 0, 1), 0 0 6px rgba(254, 240, 138, 0.8);
+}
+
+/* Neo Color Picker Range Sliders with high-contrast thumb stroke */
+.neo-color-slider {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.neo-color-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid #000000;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 2px 5px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.neo-color-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.neo-color-slider::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+}
+.neo-color-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid #000000;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 2px 5px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.neo-color-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
+.neo-color-slider::-moz-range-thumb:active {
+  transform: scale(1.25);
+}
