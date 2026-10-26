@@ -73,6 +73,7 @@ export const MarketplacePage: React.FC = () => {
   // In-flight processing tracking to prevent double-click and duplication race conditions
   const [cancellingListingIds, setCancellingListingIds] = useState<Set<string>>(new Set());
   const [buyingListingIds, setBuyingListingIds] = useState<Set<string>>(new Set());
+  const [isSubmittingSell, setIsSubmittingSell] = useState<boolean>(false);
 
   // Sell form state
   const [selectedCardToSell, setSelectedCardToSell] = useState<CardItem | null>(null);
@@ -372,9 +373,22 @@ export const MarketplacePage: React.FC = () => {
   }, [listings, currentUser]);
 
   // User's inventory cards that can be listed for sale (PUBLISHED PACKS ONLY)
+  // Deduct cards that are currently already listed on the market by this user!
   const userOwnedCards = useMemo(() => {
     if (!currentUser || !currentUser.inventory) return [];
     const list: { card: CardItem; pack: (typeof packs)[0]; count: number }[] = [];
+
+    // Map of currently active listings by this user
+    const normalListedCounts = new Map<string, number>();
+    const foilListedCounts = new Map<string, number>();
+
+    myListings.forEach(l => {
+      if (l.isFoil) {
+        foilListedCounts.set(l.cardId, (foilListedCounts.get(l.cardId) || 0) + 1);
+      } else {
+        normalListedCounts.set(l.cardId, (normalListedCounts.get(l.cardId) || 0) + 1);
+      }
+    });
 
     // ONLY allow listing cards from published packs!
     publishedPacks.forEach((p) => {
@@ -383,17 +397,23 @@ export const MarketplacePage: React.FC = () => {
         const foilCount = currentUser.inventory[`${c.id}_foil`] || 0;
         const normalCount = Math.max(0, totalCount - foilCount);
 
-        if (normalCount > 0) {
-          list.push({ card: { ...c, isFoil: false }, pack: p, count: normalCount });
+        const listedNormal = normalListedCounts.get(c.id) || 0;
+        const listedFoil = foilListedCounts.get(c.id) || 0;
+
+        const availableNormal = Math.max(0, normalCount - listedNormal);
+        const availableFoil = Math.max(0, foilCount - listedFoil);
+
+        if (availableNormal > 0) {
+          list.push({ card: { ...c, isFoil: false }, pack: p, count: availableNormal });
         }
-        if (foilCount > 0) {
-          list.push({ card: { ...c, isFoil: true }, pack: p, count: foilCount });
+        if (availableFoil > 0) {
+          list.push({ card: { ...c, isFoil: true }, pack: p, count: availableFoil });
         }
       });
     });
 
     return list;
-  }, [currentUser, publishedPacks]);
+  }, [currentUser, publishedPacks, myListings]);
 
   // 0ms INSTANT OPTIMISTIC BUY: Zero UI lag with background Supabase sync & Anti-duplication check
   const handleConfirmBuy = async () => {
@@ -699,7 +719,9 @@ export const MarketplacePage: React.FC = () => {
   };
 
   // 0ms INSTANT OPTIMISTIC LISTING: Zero UI lag with background Supabase sync
-  const handleCreateListing = () => {
+  const handleCreateListing = async () => {
+    if (isSubmittingSell) return;
+
     if (!selectedCardToSell) {
       addToast(language === 'th' ? 'กรุณาเลือกการ์ดที่ต้องการตั้งขาย' : 'Please select a card to list', 'warning');
       return;
@@ -720,21 +742,39 @@ export const MarketplacePage: React.FC = () => {
     const foilKey = `${cardToSell.id}_foil`;
 
     // Verify ownership in inventory
+    const foilCount = currentUser.inventory?.[foilKey] || 0;
+    const totalCount = currentUser.inventory?.[cardToSell.id] || 0;
+    const normalCount = Math.max(0, totalCount - foilCount);
+
     if (isFoil) {
-      const foilCount = currentUser.inventory?.[foilKey] || 0;
       if (foilCount <= 0) {
         addToast(language === 'th' ? 'คุณไม่มีการ์ดฟอยล์ใบนี้อยู่ในคลัง' : 'You do not own this foil card', 'error');
         return;
       }
     } else {
-      const totalCount = currentUser.inventory?.[cardToSell.id] || 0;
-      const foilCount = currentUser.inventory?.[foilKey] || 0;
-      const normalCount = Math.max(0, totalCount - foilCount);
       if (normalCount <= 0) {
         addToast(language === 'th' ? 'คุณไม่มีการ์ดใบนี้อยู่ในคลัง' : 'You do not own this card', 'error');
         return;
       }
     }
+
+    // Strict Anti-Duplication Check: Deduct active listings currently on market
+    const alreadyListedCount = myListings.filter(
+      l => l.cardId === cardToSell.id && !!l.isFoil === isFoil
+    ).length;
+    const availableCount = (isFoil ? foilCount : normalCount) - alreadyListedCount;
+
+    if (availableCount <= 0) {
+      addToast(
+        language === 'th'
+          ? 'คุณนำการ์ดใบนี้ไปตั้งขายครบตามจำนวนที่คุณมีแล้ว'
+          : 'You have already listed all owned copies of this card',
+        'warning'
+      );
+      return;
+    }
+
+    setIsSubmittingSell(true);
 
     // 1. Create listing object immediately
     const packObj = publishedPacks.find(p => p.id === cardToSell.packId);
@@ -765,18 +805,8 @@ export const MarketplacePage: React.FC = () => {
       localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(nextListings));
     } catch {}
 
-    // Deduct from in-memory user inventory immediately
-    const updatedInv = { ...currentUser.inventory };
-    if (isFoil) {
-      if (updatedInv[foilKey] > 1) updatedInv[foilKey] -= 1;
-      else delete updatedInv[foilKey];
-    }
-    if (updatedInv[cardToSell.id] > 1) updatedInv[cardToSell.id] -= 1;
-    else delete updatedInv[cardToSell.id];
-    currentUser.inventory = updatedInv;
-    try {
-      localStorage.setItem('mygacha_user_v2', JSON.stringify(currentUser));
-    } catch {}
+    // Deduct from in-memory user inventory safely via removeCardFromInventory
+    await removeCardFromInventory(cardToSell.id, isFoil, currentUser.id);
 
     // Close modal & reset form in 0ms!
     setIsSellModalOpen(false);
@@ -793,13 +823,14 @@ export const MarketplacePage: React.FC = () => {
     // 3. Non-blocking Background Sync
     (async () => {
       try {
-        await removeCardFromInventory(cardToSell.id, isFoil, currentUser.id);
         const freshListings = await fetchMarketListingsFromSupabase();
         const synced = [newListing, ...freshListings.filter(l => l.id !== newListing.id)];
         await saveMarketListingsToSupabase(synced);
         broadcastRealtimeEvent('market_listing_created', { listing: newListing });
       } catch (err) {
         console.warn('Background listing sync error:', err);
+      } finally {
+        setIsSubmittingSell(false);
       }
     })();
   };
@@ -1480,11 +1511,13 @@ export const MarketplacePage: React.FC = () => {
               </button>
               <button
                 type="button"
-                disabled={!selectedCardToSell}
+                disabled={!selectedCardToSell || isSubmittingSell}
                 onClick={handleCreateListing}
                 className="px-6 py-2 text-xs font-black bg-yellow-400 hover:bg-yellow-300 text-black border-2 border-black rounded-xl sketch-btn shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] disabled:opacity-50"
               >
-                {language === 'th' ? 'ยืนยันการตั้งขาย' : 'Confirm Listing'}
+                {isSubmittingSell
+                  ? (language === 'th' ? 'กำลังตั้งขาย...' : 'Listing...')
+                  : (language === 'th' ? 'ยืนยันการตั้งขาย' : 'Confirm Listing')}
               </button>
             </div>
           </div>
