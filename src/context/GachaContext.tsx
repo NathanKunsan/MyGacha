@@ -1228,7 +1228,7 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let channel: any = null;
     if (isSupabaseConfigured && supabase) {
       try {
-        channel = supabase.channel(REALTIME_CHANNEL_NAME)
+        channel = (getSharedRealtimeChannel() || supabase.channel(REALTIME_CHANNEL_NAME))
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'card_packs' },
