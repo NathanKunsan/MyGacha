@@ -1776,29 +1776,33 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     } catch {}
 
-    // 3. Sync to Supabase user_inventory
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const newQty = finalInv[cardId] || 0;
-        await syncCardsToUserInventory(targetUid, cardId, newQty);
-      } catch (err) {
-        console.warn('Failed to update Supabase inventory on card remove:', err);
+    // 3. Non-blocking Background Sync to Supabase user_inventory & Broadcast
+    (async () => {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const newQty = finalInv[cardId] || 0;
+          await syncCardsToUserInventory(targetUid, cardId, newQty);
+        } catch (err) {
+          console.warn('Failed to update Supabase inventory on card remove:', err);
+        }
       }
-    }
 
-    // 4. Broadcast to other tabs & machines
-    broadcastRealtimeEvent('inventory_updated', {
-      userId: targetUid,
-      inventory: finalInv,
-    });
-    if (localBroadcastChannel) {
       try {
-        localBroadcastChannel.postMessage({
-          event: 'inventory_updated',
-          payload: { userId: targetUid, inventory: finalInv },
+        broadcastRealtimeEvent('inventory_updated', {
+          userId: targetUid,
+          inventory: finalInv,
         });
       } catch {}
-    }
+
+      if (localBroadcastChannel) {
+        try {
+          localBroadcastChannel.postMessage({
+            event: 'inventory_updated',
+            payload: { userId: targetUid, inventory: finalInv },
+          });
+        } catch {}
+      }
+    })();
 
     return true;
   };
