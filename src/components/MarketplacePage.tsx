@@ -146,6 +146,7 @@ export const MarketplacePage: React.FC = () => {
           if (listingId) {
             setListings(prev => {
               const next = prev.filter(l => l.id !== listingId);
+              if (next.length === prev.length) return prev;
               try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
               return next;
             });
@@ -157,6 +158,7 @@ export const MarketplacePage: React.FC = () => {
           if (listingId) {
             setListings(prev => {
               const next = prev.filter(l => l.id !== listingId);
+              if (next.length === prev.length) return prev;
               try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
               return next;
             });
@@ -167,7 +169,8 @@ export const MarketplacePage: React.FC = () => {
           const newListing = data?.listing;
           if (newListing) {
             setListings(prev => {
-              const next = [newListing, ...prev.filter(l => l.id !== newListing.id)];
+              if (prev.some(l => l.id === newListing.id)) return prev;
+              const next = [newListing, ...prev];
               try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
               return next;
             });
@@ -186,6 +189,7 @@ export const MarketplacePage: React.FC = () => {
         if (listingId) {
           setListings(prev => {
             const next = prev.filter(l => l.id !== listingId);
+            if (next.length === prev.length) return prev;
             try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
             return next;
           });
@@ -195,6 +199,7 @@ export const MarketplacePage: React.FC = () => {
         if (listingId) {
           setListings(prev => {
             const next = prev.filter(l => l.id !== listingId);
+            if (next.length === prev.length) return prev;
             try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
             return next;
           });
@@ -203,7 +208,8 @@ export const MarketplacePage: React.FC = () => {
         const newListing = payload?.listing;
         if (newListing) {
           setListings(prev => {
-            const next = [newListing, ...prev.filter(l => l.id !== newListing.id)];
+            if (prev.some(l => l.id === newListing.id)) return prev;
+            const next = [newListing, ...prev];
             try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(next)); } catch {}
             return next;
           });
@@ -494,6 +500,19 @@ export const MarketplacePage: React.FC = () => {
       try {
         localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(synced));
       } catch {}
+
+      // Broadcast immediately in 0ms so all other clients remove the card instantly
+      broadcastRealtimeEvent('market_card_bought', {
+        listingId: targetListing.id,
+        sellerId: targetListing.sellerId,
+        sellerUsername: targetListing.sellerUsername,
+        buyerId: buyerUser.id,
+        buyerUsername: buyerUser.username,
+        cardId: targetListing.cardId,
+        cardName: targetListing.cardName,
+        price: targetListing.price,
+        isFoil: targetListing.isFoil,
+      });
 
       const buyerHistory: MarketHistoryItem = {
         id: `trade_${Date.now()}_buy`,
@@ -794,6 +813,9 @@ export const MarketplacePage: React.FC = () => {
     // Deduct from in-memory user inventory safely via removeCardFromInventory (runs 0ms)
     removeCardFromInventory(cardToSell.id, isFoil, currentUser.id);
 
+    // 3. Instant 0ms broadcast to all other tabs, browsers and devices!
+    broadcastRealtimeEvent('market_listing_created', { listing: newListing });
+
     addToast(
       language === 'th'
         ? `ตั้งขายการ์ด ${getCardDisplayName(newListing.cardName)}${newListing.isFoil ? ' (ฟอยล์)' : ''} ในราคา ${newListing.price.toLocaleString()} เหรียญ เรียบร้อย`
@@ -801,14 +823,10 @@ export const MarketplacePage: React.FC = () => {
       'success'
     );
 
-    // 3. Non-blocking Background Sync
+    // 4. Non-blocking Background Storage Sync (with automatic retry)
     (async () => {
       try {
-        const freshListings = await fetchMarketListingsFromSupabase();
-        const synced = [newListing, ...freshListings.filter(l => l.id !== newListing.id)];
-        setListings(synced);
-        await saveMarketListingsToSupabase(synced);
-        broadcastRealtimeEvent('market_listing_created', { listing: newListing });
+        await saveMarketListingsToSupabase(nextListings);
       } catch (err) {
         console.warn('Background listing sync error:', err);
       }
