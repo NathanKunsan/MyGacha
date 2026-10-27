@@ -643,7 +643,7 @@ export const getSharedRealtimeChannel = () => {
   if (!_sharedRealtimeChannel) {
     _sharedRealtimeChannel = supabase.channel(REALTIME_CHANNEL_NAME, {
       config: {
-        broadcast: { ack: true, self: false },
+        broadcast: { ack: false, self: false },
       },
     });
     _sharedRealtimeChannel.subscribe((status: string) => {
@@ -658,21 +658,23 @@ export const getSharedRealtimeChannel = () => {
 export const realtimeChannel = getSharedRealtimeChannel();
 
 export const broadcastRealtimeEvent = async (event: string, payload: any) => {
-  // 1. Instant local cross-tab notification
+  // 1. Instant local cross-tab notification (0ms)
   try {
     localBroadcastChannel?.postMessage({ event, payload });
   } catch (err) {
     console.warn('Local broadcast error:', err);
   }
 
-  // 2. Supabase WebSocket broadcast for cross-machine / remote sync
+  // 2. Supabase WebSocket broadcast for cross-machine / remote sync (< 50ms)
   try {
     const ch = getSharedRealtimeChannel();
     if (ch) {
-      await ch.send({
+      ch.send({
         type: 'broadcast',
         event,
         payload,
+      }).catch((err: any) => {
+        console.warn('Realtime broadcast error:', err);
       });
     }
   } catch (err) {
@@ -925,9 +927,18 @@ export const fetchMarketListingsFromSupabase = async (): Promise<MarketListing[]
   }
 
   // Merge remote with local listings so locally created pending listings are never wiped
+  const now = Date.now();
   const map = new Map<string, MarketListing>();
   remoteListings.forEach(item => { if (item?.id) map.set(item.id, item); });
-  localListings.forEach(item => { if (item?.id && !map.has(item.id)) map.set(item.id, item); });
+  localListings.forEach(item => {
+    if (item?.id && !map.has(item.id)) {
+      const createdTime = item.createdAt ? new Date(item.createdAt).getTime() : 0;
+      // Only retain very recently created pending listings (under 30s)
+      if (now - createdTime < 30000) {
+        map.set(item.id, item);
+      }
+    }
+  });
   const merged = Array.from(map.values());
 
   try {
@@ -938,22 +949,30 @@ export const fetchMarketListingsFromSupabase = async (): Promise<MarketListing[]
 };
 
 /**
- * ตลาดการ์ด (Marketplace): บันทึกรายการวางขายลง Supabase Storage
+ * ตลาดการ์ด (Marketplace): บันทึกรายการวางขายลง Supabase Storage พร้อม retry
  */
 export const saveMarketListingsToSupabase = async (listings: MarketListing[]): Promise<void> => {
   try {
     localStorage.setItem('mygacha_market_listings', JSON.stringify(listings));
   } catch {}
   if (!supabase) return;
-  try {
-    const blob = new Blob([JSON.stringify(listings, null, 2)], { type: 'application/json' });
-    await supabase.storage.from('mygacha').upload('system/market_listings.json', blob, {
-      upsert: true,
-      contentType: 'application/json',
-      cacheControl: '0',
-    });
-  } catch (err) {
-    console.error('Failed to save market listings to Supabase Storage:', err);
+
+  const blob = new Blob([JSON.stringify(listings, null, 2)], { type: 'application/json' });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { error } = await supabase.storage.from('mygacha').upload('system/market_listings.json', blob, {
+        upsert: true,
+        contentType: 'application/json',
+        cacheControl: '0',
+      });
+      if (!error) return;
+      console.warn(`saveMarketListingsToSupabase attempt ${attempt} warning:`, error);
+    } catch (err) {
+      console.warn(`saveMarketListingsToSupabase attempt ${attempt} error:`, err);
+    }
+    if (attempt < 3) {
+      await new Promise(r => setTimeout(r, 500 * attempt));
+    }
   }
 };
 
