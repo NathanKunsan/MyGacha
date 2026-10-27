@@ -753,8 +753,6 @@ export const MarketplacePage: React.FC = () => {
       }
     }
 
-    setIsSubmittingSell(true);
-
     // 1. Create listing object immediately
     const packObj =
       publishedPacks.find(p => p.id === cardToSell.packId) ||
@@ -780,6 +778,12 @@ export const MarketplacePage: React.FC = () => {
       isFoil,
     };
 
+    // Close modal & reset form in 0ms immediately!
+    setIsSellModalOpen(false);
+    setSelectedCardToSell(null);
+    setSellPrice(500);
+    setIsSubmittingSell(false);
+
     // 2. 0ms Instant Optimistic Update in State and LocalStorage
     const nextListings = [newListing, ...listings.filter(l => l.id !== newListing.id)];
     setListings(nextListings);
@@ -787,13 +791,8 @@ export const MarketplacePage: React.FC = () => {
       localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(nextListings));
     } catch {}
 
-    // Deduct from in-memory user inventory safely via removeCardFromInventory
-    await removeCardFromInventory(cardToSell.id, isFoil, currentUser.id);
-
-    // Close modal & reset form in 0ms!
-    setIsSellModalOpen(false);
-    setSelectedCardToSell(null);
-    setSellPrice(500);
+    // Deduct from in-memory user inventory safely via removeCardFromInventory (runs 0ms)
+    removeCardFromInventory(cardToSell.id, isFoil, currentUser.id);
 
     addToast(
       language === 'th'
@@ -812,8 +811,6 @@ export const MarketplacePage: React.FC = () => {
         broadcastRealtimeEvent('market_listing_created', { listing: newListing });
       } catch (err) {
         console.warn('Background listing sync error:', err);
-      } finally {
-        setIsSubmittingSell(false);
       }
     })();
   };
@@ -1163,7 +1160,7 @@ export const MarketplacePage: React.FC = () => {
                             <span>
                               {isCancelling
                                 ? (language === 'th' ? 'กำลังยกเลิก...' : 'Cancelling...')
-                                : (language === 'th' ? 'ยกเลิกการขาย (การ์ดของคุณ)' : 'Cancel Listing')}
+                                : (language === 'th' ? 'ยกเลิกการขาย' : 'Cancel Listing')}
                             </span>
                           </button>
                         ) : (
