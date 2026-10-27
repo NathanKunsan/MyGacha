@@ -262,7 +262,16 @@ export const AdminConsolePage: React.FC = () => {
     setIsClearingInProgress(true);
     try {
       if (clearUserCardsCheck) {
-        await clearUserCards(userCardScope === 'specific' ? selectedUserToClear : undefined);
+        let targetId = userCardScope === 'specific' ? selectedUserToClear : undefined;
+        let targetUsername: string | undefined = undefined;
+        if (userCardScope === 'specific' && selectedUserToClear) {
+          const targetMember = members.find(m => m.id === selectedUserToClear || m.username.toLowerCase() === selectedUserToClear.toLowerCase());
+          if (targetMember) {
+            targetId = targetMember.id;
+            targetUsername = targetMember.username;
+          }
+        }
+        await clearUserCards(targetId, targetUsername);
       }
       if (clearCoinsCheck) {
         setMembers(prev => prev.map(m => ({ ...m, coins: 5000 })));
