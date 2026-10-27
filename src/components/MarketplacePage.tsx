@@ -226,13 +226,18 @@ export const MarketplacePage: React.FC = () => {
       localBroadcastChannel.addEventListener('message', handleBroadcast);
     }
 
-    // 3. Fallback polling every 3.5 seconds
-    const pollTimer = setInterval(refreshMarketData, 3500);
+    // 3. Fallback sync on window focus & gentle background interval (instead of aggressive 3.5s polling)
+    const handleFocus = () => {
+      refreshMarketData();
+    };
+    window.addEventListener('focus', handleFocus);
+    const pollTimer = setInterval(refreshMarketData, 60000);
 
     return () => {
       if (localBroadcastChannel) {
         localBroadcastChannel.removeEventListener('message', handleBroadcast);
       }
+      window.removeEventListener('focus', handleFocus);
       clearInterval(pollTimer);
     };
   }, [refreshMarketData]);
