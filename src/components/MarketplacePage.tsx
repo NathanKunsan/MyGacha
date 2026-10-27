@@ -118,7 +118,15 @@ export const MarketplacePage: React.FC = () => {
         fetchMarketListingsFromSupabase(),
         fetchMarketHistoryFromSupabase(),
       ]);
-      setListings(remoteListings);
+      setListings(prev => {
+        const map = new Map<string, MarketListing>();
+        remoteListings.forEach(l => { if (l?.id) map.set(l.id, l); });
+        // Preserve any listings in state that are not yet on remote
+        prev.forEach(l => { if (l?.id && !map.has(l.id)) map.set(l.id, l); });
+        const merged = Array.from(map.values());
+        try { localStorage.setItem(STORAGE_MARKET_LISTINGS, JSON.stringify(merged)); } catch {}
+        return merged;
+      });
       setHistory(remoteHistory);
     } catch (err) {
       console.warn('Error refreshing market data:', err);
@@ -315,11 +323,12 @@ export const MarketplacePage: React.FC = () => {
         // Filter by published packs safely without dropping valid listings when packs are loading
         if (publishedPacks.length > 0) {
           const isPublished =
-            publishedPackIds.has(item.packId) ||
+            (item.packId && publishedPackIds.has(item.packId)) ||
             publishedPacks.some(
               (p) =>
                 (item.packName && p.seriesName.trim().toLowerCase() === item.packName.trim().toLowerCase()) ||
-                (item.franchiseName && p.franchiseName.trim().toLowerCase() === item.franchiseName.trim().toLowerCase())
+                (item.franchiseName && p.franchiseName.trim().toLowerCase() === item.franchiseName.trim().toLowerCase()) ||
+                p.cards.some(c => c.id === item.cardId)
             );
           if (!isPublished) {
             return false;
@@ -369,7 +378,10 @@ export const MarketplacePage: React.FC = () => {
   // User's own listings
   const myListings = useMemo(() => {
     if (!currentUser) return [];
-    return listings.filter((item) => item.sellerId === currentUser.id);
+    return listings.filter((item) =>
+      item.sellerId === currentUser.id ||
+      (item.sellerUsername && currentUser.username && item.sellerUsername.toLowerCase() === currentUser.username.toLowerCase())
+    );
   }, [listings, currentUser]);
 
   // User's inventory cards that can be listed for sale (PUBLISHED PACKS ONLY)
@@ -387,10 +399,10 @@ export const MarketplacePage: React.FC = () => {
         const normalCount = Math.max(0, totalCount - foilCount);
 
         if (normalCount > 0) {
-          list.push({ card: { ...c, isFoil: false }, pack: p, count: normalCount });
+          list.push({ card: { ...c, packId: p.id, isFoil: false }, pack: p, count: normalCount });
         }
         if (foilCount > 0) {
-          list.push({ card: { ...c, isFoil: true }, pack: p, count: foilCount });
+          list.push({ card: { ...c, packId: p.id, isFoil: true }, pack: p, count: foilCount });
         }
       });
     });
@@ -744,8 +756,11 @@ export const MarketplacePage: React.FC = () => {
     setIsSubmittingSell(true);
 
     // 1. Create listing object immediately
-    const packObj = publishedPacks.find(p => p.id === cardToSell.packId);
+    const packObj =
+      publishedPacks.find(p => p.id === cardToSell.packId) ||
+      publishedPacks.find(p => p.cards.some(c => c.id === cardToSell.id));
     const rColor = packObj?.rarities?.find(r => r.name === cardToSell.rarity)?.color || '#facc15';
+    const targetPackId = packObj?.id || cardToSell.packId || '';
 
     const newListing: MarketListing = {
       id: `list_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -754,7 +769,7 @@ export const MarketplacePage: React.FC = () => {
       cardImageUrl: cardToSell.imageUrl,
       rarity: cardToSell.rarity,
       rarityColor: rColor,
-      packId: cardToSell.packId,
+      packId: targetPackId,
       packName: packObj?.seriesName || '',
       franchiseName: packObj?.franchiseName || '',
       sellerId: currentUser.id,
@@ -792,6 +807,7 @@ export const MarketplacePage: React.FC = () => {
       try {
         const freshListings = await fetchMarketListingsFromSupabase();
         const synced = [newListing, ...freshListings.filter(l => l.id !== newListing.id)];
+        setListings(synced);
         await saveMarketListingsToSupabase(synced);
         broadcastRealtimeEvent('market_listing_created', { listing: newListing });
       } catch (err) {
@@ -1046,7 +1062,11 @@ export const MarketplacePage: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 sm:gap-4">
               {filteredListings.map((listing) => {
                 const ownedCount = currentUser?.inventory?.[listing.cardId] || 0;
-                const isOwnListing = Boolean(currentUser && listing.sellerId === currentUser.id);
+                const isOwnListing = Boolean(
+                  currentUser &&
+                  (listing.sellerId === currentUser.id ||
+                    (listing.sellerUsername && currentUser.username && listing.sellerUsername.toLowerCase() === currentUser.username.toLowerCase()))
+                );
                 const isCancelling = cancellingListingIds.has(listing.id);
                 const isBuying = buyingListingIds.has(listing.id);
 
