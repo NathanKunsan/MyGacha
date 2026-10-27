@@ -1189,17 +1189,7 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           } else if (event === 'inventory_updated' && payload?.userId) {
             setCurrentUser(prev => {
               if (!prev || prev.id !== payload.userId) return prev;
-              const merged = { ...prev.inventory };
-              let changed = false;
-              Object.entries(payload.inventory || {}).forEach(([cId, count]) => {
-                const num = Number(count) || 0;
-                if ((merged[cId] || 0) < num) {
-                  merged[cId] = num;
-                  changed = true;
-                }
-              });
-              if (!changed) return prev;
-              const updated = { ...prev, inventory: merged };
+              const updated = { ...prev, inventory: payload.inventory || {} };
               try {
                 localStorage.setItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(updated));
               } catch {}
@@ -1724,14 +1714,17 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const removeCardFromInventory = async (cardId: string, isFoil?: boolean, targetUserId?: string): Promise<boolean> => {
-    const uid = targetUserId || currentUser?.id;
-    if (!uid) return false;
+    let finalInv: Record<string, number> = {};
+    let targetUid = targetUserId || currentUser?.id;
 
-    let updatedInventory: Record<string, number> = {};
+    // 1. Functional state updater to avoid stale closures
+    setCurrentUser(prev => {
+      if (!prev) return null;
+      const uid = targetUserId || prev.id;
+      targetUid = uid;
+      if (prev.id !== uid && prev.username.toLowerCase() !== uid.toLowerCase()) return prev;
 
-    // 1. If modifying current user in memory
-    if (currentUser && (currentUser.id === uid || currentUser.username.toLowerCase() === uid.toLowerCase())) {
-      const newInventory = { ...currentUser.inventory };
+      const newInventory = { ...(prev.inventory || {}) };
       const curCount = newInventory[cardId] || 0;
       if (curCount <= 1) {
         delete newInventory[cardId];
@@ -1749,13 +1742,15 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
 
-      updatedInventory = newInventory;
-      const updatedUser = { ...currentUser, inventory: newInventory };
-      setCurrentUser(updatedUser);
+      finalInv = newInventory;
+      const updatedUser = { ...prev, inventory: newInventory };
       try {
         localStorage.setItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(updatedUser));
       } catch {}
-    }
+      return updatedUser;
+    });
+
+    if (!targetUid) return true;
 
     // 2. Also update in accounts storage
     try {
@@ -1764,38 +1759,16 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const accounts = JSON.parse(rawAccounts);
         if (Array.isArray(accounts)) {
           const updatedAccounts = accounts.map((acc: any) => {
-            if (acc.id === uid || acc.username?.toLowerCase() === uid.toLowerCase()) {
-              const inv = { ...(acc.inventory || {}) };
-              const cur = inv[cardId] || 0;
-              if (cur <= 1) delete inv[cardId];
-              else inv[cardId] = cur - 1;
-
-              if (isFoil) {
-                const fk = `${cardId}_foil`;
-                const fc = inv[fk] || 0;
-                if (fc <= 1) delete inv[fk];
-                else inv[fk] = fc - 1;
-              }
-              return { ...acc, inventory: inv };
+            if (acc.id === targetUid || acc.username?.toLowerCase() === targetUid?.toLowerCase()) {
+              return { ...acc, inventory: finalInv };
             }
             return acc;
           });
           localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(updatedAccounts));
         } else if (typeof accounts === 'object') {
           Object.values(accounts).forEach((acc: any) => {
-            if (acc.id === uid || acc.username?.toLowerCase() === uid.toLowerCase()) {
-              const inv = { ...(acc.inventory || {}) };
-              const cur = inv[cardId] || 0;
-              if (cur <= 1) delete inv[cardId];
-              else inv[cardId] = cur - 1;
-
-              if (isFoil) {
-                const fk = `${cardId}_foil`;
-                const fc = inv[fk] || 0;
-                if (fc <= 1) delete inv[fk];
-                else inv[fk] = fc - 1;
-              }
-              acc.inventory = inv;
+            if (acc.id === targetUid || acc.username?.toLowerCase() === targetUid?.toLowerCase()) {
+              acc.inventory = finalInv;
             }
           });
           localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(accounts));
@@ -1806,15 +1779,8 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 3. Sync to Supabase user_inventory
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data } = await supabase
-          .from('user_inventory')
-          .select('quantity')
-          .match({ user_id: uid, card_id: cardId })
-          .maybeSingle();
-
-        const curQty = data?.quantity || 0;
-        const newQty = Math.max(0, curQty - 1);
-        await syncCardsToUserInventory(uid, cardId, newQty);
+        const newQty = finalInv[cardId] || 0;
+        await syncCardsToUserInventory(targetUid, cardId, newQty);
       } catch (err) {
         console.warn('Failed to update Supabase inventory on card remove:', err);
       }
@@ -1822,9 +1788,17 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 4. Broadcast to other tabs & machines
     broadcastRealtimeEvent('inventory_updated', {
-      userId: uid,
-      inventory: updatedInventory,
+      userId: targetUid,
+      inventory: finalInv,
     });
+    if (localBroadcastChannel) {
+      try {
+        localBroadcastChannel.postMessage({
+          event: 'inventory_updated',
+          payload: { userId: targetUid, inventory: finalInv },
+        });
+      } catch {}
+    }
 
     return true;
   };
