@@ -373,22 +373,11 @@ export const MarketplacePage: React.FC = () => {
   }, [listings, currentUser]);
 
   // User's inventory cards that can be listed for sale (PUBLISHED PACKS ONLY)
-  // Deduct cards that are currently already listed on the market by this user!
+  // Cards currently on sale have already been transferred into escrow, so currentUser.inventory
+  // represents the available cards remaining in hand.
   const userOwnedCards = useMemo(() => {
     if (!currentUser || !currentUser.inventory) return [];
     const list: { card: CardItem; pack: (typeof packs)[0]; count: number }[] = [];
-
-    // Map of currently active listings by this user
-    const normalListedCounts = new Map<string, number>();
-    const foilListedCounts = new Map<string, number>();
-
-    myListings.forEach(l => {
-      if (l.isFoil) {
-        foilListedCounts.set(l.cardId, (foilListedCounts.get(l.cardId) || 0) + 1);
-      } else {
-        normalListedCounts.set(l.cardId, (normalListedCounts.get(l.cardId) || 0) + 1);
-      }
-    });
 
     // ONLY allow listing cards from published packs!
     publishedPacks.forEach((p) => {
@@ -397,23 +386,17 @@ export const MarketplacePage: React.FC = () => {
         const foilCount = currentUser.inventory[`${c.id}_foil`] || 0;
         const normalCount = Math.max(0, totalCount - foilCount);
 
-        const listedNormal = normalListedCounts.get(c.id) || 0;
-        const listedFoil = foilListedCounts.get(c.id) || 0;
-
-        const availableNormal = Math.max(0, normalCount - listedNormal);
-        const availableFoil = Math.max(0, foilCount - listedFoil);
-
-        if (availableNormal > 0) {
-          list.push({ card: { ...c, isFoil: false }, pack: p, count: availableNormal });
+        if (normalCount > 0) {
+          list.push({ card: { ...c, isFoil: false }, pack: p, count: normalCount });
         }
-        if (availableFoil > 0) {
-          list.push({ card: { ...c, isFoil: true }, pack: p, count: availableFoil });
+        if (foilCount > 0) {
+          list.push({ card: { ...c, isFoil: true }, pack: p, count: foilCount });
         }
       });
     });
 
     return list;
-  }, [currentUser, publishedPacks, myListings]);
+  }, [currentUser, publishedPacks]);
 
   // 0ms INSTANT OPTIMISTIC BUY: Zero UI lag with background Supabase sync & Anti-duplication check
   const handleConfirmBuy = async () => {
@@ -756,22 +739,6 @@ export const MarketplacePage: React.FC = () => {
         addToast(language === 'th' ? 'คุณไม่มีการ์ดใบนี้อยู่ในคลัง' : 'You do not own this card', 'error');
         return;
       }
-    }
-
-    // Strict Anti-Duplication Check: Deduct active listings currently on market
-    const alreadyListedCount = myListings.filter(
-      l => l.cardId === cardToSell.id && !!l.isFoil === isFoil
-    ).length;
-    const availableCount = (isFoil ? foilCount : normalCount) - alreadyListedCount;
-
-    if (availableCount <= 0) {
-      addToast(
-        language === 'th'
-          ? 'คุณนำการ์ดใบนี้ไปตั้งขายครบตามจำนวนที่คุณมีแล้ว'
-          : 'You have already listed all owned copies of this card',
-        'warning'
-      );
-      return;
     }
 
     setIsSubmittingSell(true);
