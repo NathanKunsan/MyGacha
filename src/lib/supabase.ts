@@ -867,37 +867,51 @@ export const deleteReportInSupabase = async (reportId: string): Promise<boolean>
  * ตลาดการ์ด (Marketplace): ดึงรายการวางขายจาก Supabase Storage (และ Database Fallback)
  */
 export const fetchMarketListingsFromSupabase = async (): Promise<MarketListing[]> => {
+  let localListings: MarketListing[] = [];
+  try {
+    const local = localStorage.getItem('mygacha_market_listings');
+    if (local) {
+      const parsedLocal = JSON.parse(local);
+      if (Array.isArray(parsedLocal)) localListings = parsedLocal;
+    }
+  } catch {}
+
+  let remoteListings: MarketListing[] | null = null;
   if (supabase) {
     try {
       // 1. Direct fetch with cache-busting timestamp and no-cache headers to bypass Cloudflare/browser cache
       const { data: urlData } = supabase.storage.from('mygacha').getPublicUrl('system/market_listings.json');
       if (urlData?.publicUrl) {
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3000);
           const res = await fetch(`${urlData.publicUrl}?t=${Date.now()}_${Math.random()}`, {
             cache: 'no-store',
+            signal: controller.signal,
             headers: {
               'Cache-Control': 'no-cache, no-store, must-revalidate',
               Pragma: 'no-cache',
             },
           });
+          clearTimeout(timeoutId);
           if (res.ok) {
             const parsed = await res.json();
             if (Array.isArray(parsed)) {
-              localStorage.setItem('mygacha_market_listings', JSON.stringify(parsed));
-              return parsed;
+              remoteListings = parsed;
             }
           }
         } catch {}
       }
 
       // 2. Fallback to Supabase download()
-      const { data, error } = await supabase.storage.from('mygacha').download('system/market_listings.json');
-      if (!error && data) {
-        const text = await data.text();
-        const parsed = JSON.parse(text);
-        if (Array.isArray(parsed)) {
-          localStorage.setItem('mygacha_market_listings', JSON.stringify(parsed));
-          return parsed;
+      if (!remoteListings) {
+        const { data, error } = await supabase.storage.from('mygacha').download('system/market_listings.json');
+        if (!error && data) {
+          const text = await data.text();
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed)) {
+            remoteListings = parsed;
+          }
         }
       }
     } catch (err) {
@@ -905,12 +919,22 @@ export const fetchMarketListingsFromSupabase = async (): Promise<MarketListing[]
     }
   }
 
-  try {
-    const local = localStorage.getItem('mygacha_market_listings');
-    return local ? JSON.parse(local) : [];
-  } catch {
-    return [];
+  // If remote was unreachable, return local listings
+  if (!remoteListings) {
+    return localListings;
   }
+
+  // Merge remote with local listings so locally created pending listings are never wiped
+  const map = new Map<string, MarketListing>();
+  remoteListings.forEach(item => { if (item?.id) map.set(item.id, item); });
+  localListings.forEach(item => { if (item?.id && !map.has(item.id)) map.set(item.id, item); });
+  const merged = Array.from(map.values());
+
+  try {
+    localStorage.setItem('mygacha_market_listings', JSON.stringify(merged));
+  } catch {}
+
+  return merged;
 };
 
 /**
