@@ -1448,8 +1448,8 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
-    // 4. Fallback Polling every 1 second (1000ms) for high-speed real-time sync
-    const pollInterval = setInterval(() => {
+    // 4. Gentle fallback sync on window focus (instead of aggressive 1s polling to protect Supabase quotas)
+    const handleWindowFocus = () => {
       try {
         refreshPacks();
 
@@ -1488,20 +1488,23 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }).catch(() => {});
         }
       } catch (pollErr) {
-        console.warn('Polling error:', pollErr);
+        console.warn('Sync error:', pollErr);
       }
-    }, 1000);
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    // Background safety interval every 60 seconds (instead of 1000ms)
+    const pollInterval = setInterval(handleWindowFocus, 60000);
 
     return () => {
       window.removeEventListener('storage', handleStorageEvent);
+      window.removeEventListener('focus', handleWindowFocus);
+      clearInterval(pollInterval);
       if (channel && supabase) {
         try {
           supabase.removeChannel(channel);
-        } catch {
-          try { channel.unsubscribe(); } catch {}
-        }
+        } catch {}
       }
-      clearInterval(pollInterval);
     };
   }, [refreshPacks, currentUser?.id, currentUser?.username]);
 
