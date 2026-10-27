@@ -104,7 +104,7 @@ interface GachaContextType {
   deleteRedeemCode: (id: string) => void;
   toggleRedeemCodeActive: (id: string) => void;
   // System Reset & Clearance Management
-  clearUserCards: (targetUserId?: string) => Promise<void>;
+  clearUserCards: (targetUserId?: string, targetUsername?: string) => Promise<void>;
   resetAllCoins: (defaultCoins?: number) => Promise<void>;
   clearAllPacksAndCards: () => Promise<void>;
   clearAllTagsFromSystem: () => Promise<void>;
@@ -1065,17 +1065,19 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const handleUserInventoryCleared = (payload: any) => {
       const targetId = payload?.userId;
-      if (!targetId) return;
+      const targetUsername = payload?.username;
       setCurrentUser(curr => {
         if (!curr) return null;
-        const isMatch = curr.id === targetId || curr.username.toLowerCase() === String(targetId).toLowerCase();
-        if (isMatch) {
-          const updated = { ...curr, inventory: {} };
+        const matchId = targetId && (curr.id === targetId || curr.username.toLowerCase() === String(targetId).toLowerCase());
+        const matchUser = targetUsername && (curr.username.toLowerCase() === String(targetUsername).toLowerCase() || curr.id === targetUsername);
+        if (matchId || matchUser) {
+          const updated = { ...curr, inventory: {}, lastInventoryClearTime: Date.now() };
           try {
             localStorage.setItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(updated));
           } catch {}
-          if (isSupabaseConfigured && supabase && curr.id) {
-            supabase.from('user_inventory').delete().eq('user_id', curr.id).then(() => {});
+          if (isSupabaseConfigured && supabase) {
+            if (curr.id) supabase.from('user_inventory').delete().eq('user_id', curr.id).then(() => {});
+            if (curr.username) supabase.from('user_inventory').delete().eq('user_id', curr.username).then(() => {});
           }
           return updated;
         }
@@ -1086,8 +1088,11 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (stored) {
           const accs = JSON.parse(stored);
           Object.values(accs).forEach((acc: any) => {
-            if (acc.id === targetId || acc.username?.toLowerCase() === String(targetId).toLowerCase()) {
+            const matchId = targetId && (acc.id === targetId || acc.username?.toLowerCase() === String(targetId).toLowerCase());
+            const matchUser = targetUsername && (acc.username?.toLowerCase() === String(targetUsername).toLowerCase() || acc.id === targetUsername);
+            if (matchId || matchUser) {
               acc.inventory = {};
+              acc.lastInventoryClearTime = Date.now();
             }
           });
           localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(accs));
@@ -1832,6 +1837,9 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         } catch {}
         try {
           await supabase.from('user_inventory').delete().eq('user_id', currentUser.id);
+          if (currentUser.username) {
+            await supabase.from('user_inventory').delete().eq('user_id', currentUser.username);
+          }
         } catch {}
         if (isTargetedClear && resetState.clearedUserInventories) {
           delete resetState.clearedUserInventories[currentUser.id];
@@ -1853,15 +1861,6 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             if ((merged[cardId] || 0) < qty) {
               merged[cardId] = qty;
               changed = true;
-            }
-          });
-        }
-
-        // Sync any local cards not present on remote
-        if (remoteInventory) {
-          Object.entries(merged).forEach(([cardId, qty]) => {
-            if (qty > 0 && !(cardId in remoteInventory) && !cardId.endsWith('_foil')) {
-              syncCardsToUserInventory(currentUser.id, cardId, qty);
             }
           });
         }
@@ -2917,22 +2916,31 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // System Clearance Functions
-  const clearUserCards = async (targetUserId?: string) => {
+  const clearUserCards = async (targetUserId?: string, targetUsername?: string) => {
     try {
       const resetState = await fetchSystemResetState();
 
       if (targetUserId && targetUserId !== 'all') {
-        // 1. Save specific user clearance in system state
+        const cleanId = (targetUserId || '').trim();
+        const cleanUsername = (targetUsername || '').trim().toLowerCase();
+
+        // 1. Save specific user clearance in system state for BOTH id and username
         resetState.clearedUserInventories = {
           ...(resetState.clearedUserInventories || {}),
-          [targetUserId]: Date.now(),
         };
+        if (cleanId) resetState.clearedUserInventories[cleanId] = Date.now();
+        if (cleanUsername) resetState.clearedUserInventories[cleanUsername] = Date.now();
         await saveSystemResetState(resetState);
 
-        // 2. Try direct Supabase delete
+        // 2. Direct Supabase delete: delete by id AND by username
         if (isSupabaseConfigured && supabase) {
           try {
-            await supabase.from('user_inventory').delete().eq('user_id', targetUserId);
+            if (cleanId) {
+              await supabase.from('user_inventory').delete().eq('user_id', cleanId);
+            }
+            if (cleanUsername && cleanUsername !== cleanId) {
+              await supabase.from('user_inventory').delete().eq('user_id', cleanUsername);
+            }
           } catch (e) {
             console.warn('Supabase delete user_inventory failed:', e);
           }
@@ -2944,8 +2952,11 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (stored) {
             const accs: Record<string, UserProfile> = JSON.parse(stored);
             Object.values(accs).forEach((acc) => {
-              if (acc.id === targetUserId || acc.username.toLowerCase() === targetUserId.toLowerCase()) {
+              const matchId = cleanId && (acc.id === cleanId || acc.username?.toLowerCase() === cleanId.toLowerCase());
+              const matchUser = cleanUsername && (acc.username?.toLowerCase() === cleanUsername || acc.id === cleanUsername);
+              if (matchId || matchUser) {
                 acc.inventory = {};
+                acc.lastInventoryClearTime = Date.now();
               }
             });
             localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(accs));
@@ -2953,23 +2964,28 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         } catch {}
 
         // 4. Update in-memory currentUser if matched
-        if (currentUser && (currentUser.id === targetUserId || currentUser.username.toLowerCase() === targetUserId.toLowerCase())) {
-          const updated = { ...currentUser, inventory: {} };
-          setCurrentUser(updated);
-          try {
-            localStorage.setItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(updated));
-          } catch {}
+        if (currentUser) {
+          const matchId = cleanId && (currentUser.id === cleanId || currentUser.username.toLowerCase() === cleanId.toLowerCase());
+          const matchUser = cleanUsername && (currentUser.username.toLowerCase() === cleanUsername || currentUser.id === cleanUsername);
+          if (matchId || matchUser) {
+            const updated = { ...currentUser, inventory: {}, lastInventoryClearTime: Date.now() };
+            setCurrentUser(updated);
+            try {
+              localStorage.setItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(updated));
+            } catch {}
+          }
         }
 
         // 5. Broadcast to cross-tab and cross-machine
         broadcastRealtimeEvent('user_inventory_cleared', {
-          userId: targetUserId,
+          userId: cleanId,
+          username: cleanUsername,
           timestamp: Date.now(),
         });
         if (localBroadcastChannel) {
           localBroadcastChannel.postMessage({
             event: 'user_inventory_cleared',
-            payload: { userId: targetUserId, timestamp: Date.now() },
+            payload: { userId: cleanId, username: cleanUsername, timestamp: Date.now() },
           });
         }
       } else {
@@ -2994,6 +3010,7 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             const accs: Record<string, UserProfile> = JSON.parse(stored);
             Object.values(accs).forEach((acc) => {
               acc.inventory = {};
+              acc.lastInventoryClearTime = Date.now();
             });
             localStorage.setItem(LOCAL_STORAGE_KEY_ACCOUNTS, JSON.stringify(accs));
           }
@@ -3001,7 +3018,7 @@ export const GachaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         // 4. Update in-memory currentUser
         if (currentUser) {
-          const updated = { ...currentUser, inventory: {} };
+          const updated = { ...currentUser, inventory: {}, lastInventoryClearTime: Date.now() };
           setCurrentUser(updated);
           try {
             localStorage.setItem(LOCAL_STORAGE_KEY_USER, JSON.stringify(updated));
